@@ -2,9 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:flutter/cupertino.dart';
+import 'dart:async';
 
 void main() {
   runApp(const ReverseCalcApp());
+}
+
+// --- データモデル ---
+class Task {
+  String name;
+  int duration;
+  bool isDone;
+
+  Task({required this.name, required this.duration, this.isDone = false});
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'duration': duration,
+    'isDone': isDone,
+  };
+
+  factory Task.fromJson(Map<String, dynamic> json) => Task(
+    name: json['name'],
+    duration: json['duration'],
+    isDone: json['isDone'] ?? false,
+  );
 }
 
 class ReverseCalcApp extends StatelessWidget {
@@ -15,7 +38,7 @@ class ReverseCalcApp extends StatelessWidget {
     return MaterialApp(
       title: '予定逆算アプリ',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
       home: const ReverseCalcScreen(),
@@ -23,33 +46,63 @@ class ReverseCalcApp extends StatelessWidget {
   }
 }
 
-class ReverseCalcScreen extends StatefulWidget {
+class ReverseCalcScreen extends StatelessWidget {
+  // ←ここをStatelessWidgetに変える
   const ReverseCalcScreen({super.key});
 
   @override
-  State<ReverseCalcScreen> createState() => _ReverseCalcScreenState();
+  Widget build(BuildContext context) {
+    return const ReverseCalcContent();
+  }
 }
 
-class _ReverseCalcScreenState extends State<ReverseCalcScreen> {
+class ReverseCalcContent extends StatefulWidget {
+  const ReverseCalcContent({super.key});
+
+  @override
+  State<ReverseCalcContent> createState() => _ReverseCalcContentState();
+}
+
+class _ReverseCalcContentState extends State<ReverseCalcContent> {
   DateTime goalTime = DateTime.now();
-  List<Map<String, dynamic>> tasks = [];
+  List<Task> tasks = [];
+  String goalLabel = '目標時刻';
+  Map<String, Map<String, dynamic>> templates = {};
+  Map<String, int> quickMaster = {'Walking': 20, '風呂': 30, 'スッキリ': 10};
+  int bufferMinutes = 0;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _loadData(); // アプリ起動時にデータを読み込む
+    _loadData();
+    // 1分ごとに画面を更新するタイマー
+    _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (mounted) setState(() {});
+    });
   }
 
-  // --- データの保存と読み込み ---
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  // --- データの保存 ---
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
     final String encodedData = json.encode({
       'goalTime': goalTime.toIso8601String(),
-      'tasks': tasks,
+      'goalLabel': goalLabel,
+      'tasks': tasks.map((t) => t.toJson()).toList(),
+      'templates': templates,
+      'quickMaster': quickMaster,
+      'bufferMinutes': bufferMinutes,
     });
     await prefs.setString('app_data', encodedData);
   }
 
+  // --- データの読み込み ---
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     final String? data = prefs.getString('app_data');
@@ -57,42 +110,33 @@ class _ReverseCalcScreenState extends State<ReverseCalcScreen> {
       final decodedData = json.decode(data);
       setState(() {
         goalTime = DateTime.parse(decodedData['goalTime']);
-        tasks = List<Map<String, dynamic>>.from(decodedData['tasks']);
-      });
-    } else {
-      // 初期データ
-      setState(() {
-        tasks = [
-          {'name': 'バス出発', 'duration': 0},
-          {'name': 'スッキ', 'duration': 58},
-          {'name': '洗い始', 'duration': 25},
-        ];
+        goalLabel = decodedData['goalLabel'] ?? '目標時刻';
+        tasks = (decodedData['tasks'] as List)
+            .map((item) => Task.fromJson(item))
+            .toList();
+        if (decodedData['templates'] != null) {
+          templates = Map<String, Map<String, dynamic>>.from(
+            decodedData['templates'],
+          );
+        }
+        if (decodedData['quickMaster'] != null) {
+          quickMaster = Map<String, int>.from(decodedData['quickMaster']);
+        }
+        bufferMinutes = decodedData['bufferMinutes'] ?? 0;
       });
     }
   }
 
-  // --- 予定の追加ダイアログ ---
-  void _showAddTaskDialog() {
-    String newName = '';
-    int newDuration = 0;
-
+  // --- テンプレート操作 ---
+  void _saveCurrentAsTemplate() {
+    String templateName = '';
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('予定逆算アプリと'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              decoration: const InputDecoration(labelText: '予定名（例：お風呂）'),
-              onChanged: (value) => newName = value,
-            ),
-            TextField(
-              decoration: const InputDecoration(labelText: '所要時間（分）'),
-              keyboardType: TextInputType.number,
-              onChanged: (value) => newDuration = int.tryParse(value) ?? 0,
-            ),
-          ],
+        title: const Text('テンプレートとして保存'),
+        content: TextField(
+          decoration: const InputDecoration(labelText: 'テンプレート名（例：平日の朝）'),
+          onChanged: (value) => templateName = value,
         ),
         actions: [
           TextButton(
@@ -101,75 +145,287 @@ class _ReverseCalcScreenState extends State<ReverseCalcScreen> {
           ),
           ElevatedButton(
             onPressed: () {
+              if (templateName.isEmpty) return;
               setState(() {
-                tasks.add({'name': newName, 'duration': newDuration});
+                goalLabel = templateName;
+                templates[templateName] = {
+                  'goalLabel': goalLabel,
+                  'tasks': tasks.map((t) => t.toJson()).toList(),
+                  'bufferMinutes': bufferMinutes,
+                };
                 _saveData();
               });
               Navigator.pop(context);
             },
-            child: const Text('追加'),
+            child: const Text('保存'),
           ),
         ],
       ),
     );
   }
 
+  void _loadTemplate(String name) {
+    setState(() {
+      final data = templates[name]!;
+      goalLabel = data['goalLabel'] ?? name;
+      tasks = (data['tasks'] as List)
+          .map((item) => Task.fromJson(item))
+          .toList();
+      bufferMinutes = data['bufferMinutes'] ?? 0;
+      _saveData();
+    });
+  }
+
+  void _deleteTemplate(String name) {
+    setState(() {
+      templates.remove(name);
+      _saveData();
+    });
+  }
+
+  void _showManageTemplatesDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('テンプレートの管理'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: templates.isEmpty
+                ? const Text('保存されたテンプレートはありません')
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: templates.keys.length,
+                    itemBuilder: (context, index) {
+                      String name = templates.keys.elementAt(index);
+                      return ListTile(
+                        title: Text(name),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            _deleteTemplate(name);
+                            setDialogState(() {});
+                          },
+                        ),
+                        onTap: () {
+                          _loadTemplate(name);
+                          Navigator.pop(context);
+                        },
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('閉じる'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- 予定の追加・編集ダイアログ ---
+  void _showTaskDialog({Task? task, int? index}) {
+    String newName = task?.name ?? '';
+    int newDuration = task?.duration ?? 15;
+    final isEditing = task != null;
+    final nameController = TextEditingController(text: newName);
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(isEditing ? '予定を編集' : '新しい予定を追加'),
+          content: SizedBox(
+            width: 300,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'クイック追加（×で削除）',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ...quickMaster.entries.map(
+                        (entry) => InputChip(
+                          label: Text(entry.key),
+                          onPressed: () {
+                            setState(() {
+                              tasks.add(
+                                Task(name: entry.key, duration: entry.value),
+                              );
+                              _saveData();
+                            });
+                            Navigator.pop(context);
+                          },
+                          onDeleted: () {
+                            setState(() {
+                              quickMaster.remove(entry.key);
+                              _saveData();
+                            });
+                            setDialogState(() {});
+                          },
+                          deleteIconColor: Colors.grey,
+                        ),
+                      ),
+                      ActionChip(
+                        backgroundColor: Colors.blue.withOpacity(0.1),
+                        avatar: const Icon(Icons.add, size: 16),
+                        label: const Text('登録'),
+                        onPressed: () {
+                          if (newName.isNotEmpty) {
+                            setState(() {
+                              quickMaster[newName] = newDuration;
+                              _saveData();
+                            });
+                            setDialogState(() {});
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 32),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: '予定名'),
+                    onChanged: (value) => newName = value,
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    '所要時間',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  SizedBox(
+                    height: 150,
+                    child: CupertinoTimerPicker(
+                      mode: CupertinoTimerPickerMode.hm,
+                      minuteInterval: 5,
+                      initialTimerDuration: Duration(minutes: newDuration),
+                      onTimerDurationChanged: (Duration duration) {
+                        newDuration = duration.inMinutes;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('キャンセル'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (newName.isEmpty) return;
+                setState(() {
+                  if (isEditing) {
+                    tasks[index!] = Task(name: newName, duration: newDuration);
+                  } else {
+                    tasks.add(Task(name: newName, duration: newDuration));
+                  }
+                  _saveData();
+                });
+                Navigator.pop(context);
+              },
+              child: Text(isEditing ? '更新' : '追加'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // 逆算計算
-    List<Map<String, dynamic>> calculatedResults = [];
-    DateTime currentTime = goalTime;
+    int tasksDuration = tasks.fold(0, (sum, item) => sum + item.duration);
+    int totalBuffer = tasks.length > 1 ? (tasks.length - 1) * bufferMinutes : 0;
+    int totalDuration = tasksDuration + totalBuffer;
 
-    for (var task in tasks) {
-      currentTime = currentTime.subtract(Duration(minutes: task['duration']));
-      calculatedResults.add({
-        'name': task['name'],
-        'duration': task['duration'],
-        'time': DateFormat('HH:mm').format(currentTime),
-      });
+    DateTime startTime = goalTime.subtract(Duration(minutes: totalDuration));
+    List<DateTime> calculatedTimes = [];
+    DateTime nextStartTime = startTime;
+
+    for (int i = 0; i < tasks.length; i++) {
+      calculatedTimes.add(nextStartTime);
+      nextStartTime = nextStartTime.add(
+        Duration(minutes: tasks[i].duration + bufferMinutes),
+      );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('予定逆算アプリ'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('予定逆算アプリ', style: TextStyle(fontSize: 16)),
+            Text(
+              '現在時刻: ${DateFormat('HH:mm').format(DateTime.now())}',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.folder_special),
+            onSelected: (value) {
+              if (value == 'save_new') {
+                _saveCurrentAsTemplate();
+              } else if (value == 'manage') {
+                _showManageTemplatesDialog();
+              } else {
+                _loadTemplate(value);
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'save_new',
+                child: Row(
+                  children: [
+                    Icon(Icons.save, color: Colors.blue),
+                    Text(' 保存'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'manage',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings, color: Colors.grey),
+                    Text(' 管理'),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              ...templates.keys.map(
+                (name) => PopupMenuItem(value: name, child: Text(name)),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Center(child: Chip(label: Text('合計: $totalDuration分'))),
+          ),
+        ],
       ),
       body: Column(
         children: [
-          ListTile(
-            tileColor: Colors.deepPurple.withOpacity(0.1),
-            title: const Text('目標時刻（ここから逆算）'),
-            subtitle: Text(
-              DateFormat('HH:mm').format(goalTime),
-              style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-            ),
-            trailing: const Icon(Icons.edit_calendar),
-            onTap: () async {
-              final time = await showTimePicker(
-                context: context,
-                initialTime: TimeOfDay.fromDateTime(goalTime),
-              );
-              if (time != null) {
-                setState(() {
-                  goalTime = DateTime(
-                    goalTime.year,
-                    goalTime.month,
-                    goalTime.day,
-                    time.hour,
-                    time.minute,
-                  );
-                  _saveData();
-                });
-              }
-            },
-          ),
-          const Padding(
-            padding: EdgeInsets.all(8.0),
-            child: Text('長押しで並び替え、左スワイプで削除'),
-          ),
+          _buildGoalTimeTile(),
+          _buildBufferPanel(),
+          const Divider(height: 1),
           Expanded(
             child: ReorderableListView.builder(
-              buildDefaultDragHandles: false, // ★右側の自動「=」をオフにする
+              buildDefaultDragHandles: false,
               itemCount: tasks.length,
               onReorder: (oldIndex, newIndex) {
                 setState(() {
@@ -180,50 +436,278 @@ class _ReverseCalcScreenState extends State<ReverseCalcScreen> {
                 });
               },
               itemBuilder: (context, index) {
-                final task = tasks[index];
-                final calc = calculatedResults[index];
-                return Dismissible(
-                  key: ValueKey('${task['name']}_$index'),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    color: Colors.red,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: const Icon(Icons.delete, color: Colors.white),
-                  ),
-                  onDismissed: (direction) {
-                    setState(() {
-                      tasks.removeAt(index);
-                      _saveData();
-                    });
-                  },
-                  child: ListTile(
-                    key: ValueKey('${task['name']}_$index'),
-                    // ★左側に「≡」アイコンを配置し、ここをドラッグのつまみに指定する
-                    leading: ReorderableDragStartListener(
-                      index: index,
-                      child: const Icon(Icons.menu, color: Colors.grey),
-                    ),
-                    title: Text(task['name']),
-                    subtitle: Text('所要時間: ${task['duration']}分'),
-                    trailing: Text(
-                      calc['time'],
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
-                      ),
-                    ),
-                  ),
+                return _buildTaskTile(
+                  tasks[index],
+                  calculatedTimes[index],
+                  index,
                 );
               },
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddTaskDialog,
-        child: const Icon(Icons.add),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showTaskDialog(),
+        icon: const Icon(Icons.add),
+        label: const Text('予定追加'),
+      ),
+    );
+  }
+
+  Widget _buildGoalTimeTile() {
+    return ListTile(
+      tileColor: Colors.indigo.withOpacity(0.05),
+      title: const Text(
+        '目標時刻',
+        style: TextStyle(fontSize: 12, color: Colors.grey),
+      ),
+      subtitle: Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Text(
+            DateFormat('HH:mm').format(goalTime),
+            style: const TextStyle(
+              fontSize: 36,
+              fontWeight: FontWeight.bold,
+              color: Colors.indigo,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => _showGoalLabelEditDialog(),
+              child: Text(
+                goalLabel,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.indigo,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ],
+      ),
+      trailing: const Icon(Icons.edit_calendar),
+      onTap: () async {
+        final time = await showTimePicker(
+          context: context,
+          initialTime: TimeOfDay.fromDateTime(goalTime),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+            child: child!,
+          ),
+        );
+        if (time != null) {
+          setState(() {
+            goalTime = DateTime(
+              goalTime.year,
+              goalTime.month,
+              goalTime.day,
+              time.hour,
+              time.minute,
+            );
+            _saveData();
+          });
+        }
+      },
+    );
+  }
+
+  Widget _buildBufferPanel() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      color: Colors.orange.withOpacity(0.05),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.hourglass_empty, size: 16, color: Colors.orange),
+              const SizedBox(width: 8),
+              const Text('タスク間の余裕：', style: TextStyle(fontSize: 12)),
+              Text(
+                '$bufferMinutes 分',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange,
+                ),
+              ),
+              const Spacer(),
+              Wrap(
+                spacing: 4,
+                children: [0, 2, 5]
+                    .map(
+                      (m) => ChoiceChip(
+                        label: Text(
+                          '${m}分',
+                          style: const TextStyle(fontSize: 10),
+                        ),
+                        selected: bufferMinutes == m,
+                        onSelected: (selected) {
+                          if (selected)
+                            setState(() {
+                              bufferMinutes = m;
+                              _saveData();
+                            });
+                        },
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ),
+          Slider(
+            value: bufferMinutes.toDouble(),
+            min: 0,
+            max: 15,
+            divisions: 15,
+            activeColor: Colors.orange,
+            onChanged: (value) => setState(() {
+              bufferMinutes = value.toInt();
+              _saveData();
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTaskTile(Task task, DateTime startTime, int index) {
+    final now = DateTime.now();
+    final endTime = startTime.add(Duration(minutes: task.duration));
+    bool isCurrent = now.isAfter(startTime) && now.isBefore(endTime);
+    bool isPast = now.isAfter(endTime);
+    bool isLate = isPast && !task.isDone;
+
+    return Dismissible(
+      key: ValueKey(task.hashCode + index),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        color: Colors.red,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      onDismissed: (_) {
+        setState(() {
+          tasks.removeAt(index);
+          _saveData();
+        });
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: ListTile(
+          onTap: () => _showTaskDialog(task: task, index: index),
+          tileColor: isCurrent ? Colors.blue.withOpacity(0.1) : null,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: isCurrent
+                ? const BorderSide(color: Colors.blue, width: 2)
+                : BorderSide.none,
+          ),
+          leading: Checkbox(
+            value: task.isDone,
+            onChanged: (bool? value) {
+              setState(() {
+                task.isDone = value ?? false;
+                _saveData();
+              });
+            },
+          ),
+          title: Row(
+            children: [
+              Text(
+                task.name,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  decoration: task.isDone ? TextDecoration.lineThrough : null,
+                  color: task.isDone
+                      ? Colors.grey
+                      : (isLate ? Colors.red : Colors.black),
+                ),
+              ),
+              if (isCurrent) ...[
+                const SizedBox(width: 8),
+                const Badge(label: Text('NOW'), backgroundColor: Colors.blue),
+              ],
+            ],
+          ),
+          subtitle: isCurrent
+              ? Text(
+                  'あと ${endTime.difference(now).inMinutes + 1} 分で終了予定',
+                  style: const TextStyle(
+                    color: Colors.blue,
+                    fontWeight: FontWeight.bold,
+                  ),
+                )
+              : Text('所要時間: ${task.duration}分'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    DateFormat('HH:mm').format(startTime),
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: task.isDone
+                          ? Colors.grey
+                          : (isLate ? Colors.red : Colors.blue),
+                    ),
+                  ),
+                  Text(
+                    isLate ? '遅延中' : '開始',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isLate ? Colors.red : Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              ReorderableDragStartListener(
+                index: index,
+                child: const Icon(Icons.drag_handle, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showGoalLabelEditDialog() {
+    String newLabel = goalLabel;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('目標の名称を変更'),
+        content: TextField(
+          controller: TextEditingController(text: goalLabel),
+          onChanged: (value) => newLabel = value,
+          decoration: const InputDecoration(hintText: '例：バス出発、家を出る'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                goalLabel = newLabel;
+                _saveData();
+              });
+              Navigator.pop(context);
+            },
+            child: const Text('更新'),
+          ),
+        ],
       ),
     );
   }
