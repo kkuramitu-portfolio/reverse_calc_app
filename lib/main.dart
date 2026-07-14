@@ -47,7 +47,6 @@ class ReverseCalcApp extends StatelessWidget {
 }
 
 class ReverseCalcScreen extends StatelessWidget {
-  // ←ここをStatelessWidgetに変える
   const ReverseCalcScreen({super.key});
 
   @override
@@ -76,7 +75,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   void initState() {
     super.initState();
     _loadData();
-    // 1分ごとに画面を更新するタイマー
     _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) setState(() {});
     });
@@ -344,11 +342,25 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+
+    // ★重要：日付の罠を解消
+    // 目標時刻の日付を「今日」に強制的に合わせる
+    DateTime normalizedGoal = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      goalTime.hour,
+      goalTime.minute,
+    );
+
     int tasksDuration = tasks.fold(0, (sum, item) => sum + item.duration);
     int totalBuffer = tasks.length > 1 ? (tasks.length - 1) * bufferMinutes : 0;
     int totalDuration = tasksDuration + totalBuffer;
 
-    DateTime startTime = goalTime.subtract(Duration(minutes: totalDuration));
+    DateTime startTime = normalizedGoal.subtract(
+      Duration(minutes: totalDuration),
+    );
     List<DateTime> calculatedTimes = [];
     DateTime nextStartTime = startTime;
 
@@ -366,7 +378,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           children: [
             const Text('予定逆算アプリ', style: TextStyle(fontSize: 16)),
             Text(
-              '現在時刻: ${DateFormat('HH:mm').format(DateTime.now())}',
+              '現在時刻: ${DateFormat('HH:mm').format(now)}',
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.normal,
@@ -383,6 +395,13 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 _saveCurrentAsTemplate();
               } else if (value == 'manage') {
                 _showManageTemplatesDialog();
+              } else if (value == 'reset') {
+                setState(() {
+                  for (var t in tasks) {
+                    t.isDone = false;
+                  }
+                  _saveData();
+                });
               } else {
                 _loadTemplate(value);
               }
@@ -406,6 +425,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   ],
                 ),
               ),
+              const PopupMenuItem(
+                value: 'reset',
+                child: Row(
+                  children: [
+                    Icon(Icons.refresh, color: Colors.orange),
+                    Text(' 全リセット'),
+                  ],
+                ),
+              ),
               const PopupMenuDivider(),
               ...templates.keys.map(
                 (name) => PopupMenuItem(value: name, child: Text(name)),
@@ -420,7 +448,62 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       ),
       body: Column(
         children: [
-          _buildGoalTimeTile(),
+          // 全タスク完了時のバナー
+          if (tasks.isNotEmpty && tasks.every((t) => t.isDone))
+            Builder(
+              builder: (context) {
+                // 目標時刻までの残り時間を計算
+                final diff = normalizedGoal.difference(now).inMinutes;
+                final bool isEarly = diff > 0;
+
+                return Container(
+                  width: double.infinity,
+                  color: isEarly ? Colors.teal : Colors.green, // 余裕がある時は少し色を変える
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 10,
+                    horizontal: 16,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        isEarly ? Icons.timer_outlined : Icons.celebration,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 10),
+                      RichText(
+                        text: TextSpan(
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                          ),
+                          children: [
+                            if (isEarly) ...[
+                              const TextSpan(text: '予定時刻の '),
+                              TextSpan(
+                                text: '$diff 分前',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 20,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                              const TextSpan(text: ' に準備完了です！'),
+                            ] else ...[
+                              const TextSpan(
+                                text: '準備完了！いってらっしゃい！',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          _buildGoalTimeTile(normalizedGoal),
           _buildBufferPanel(),
           const Divider(height: 1),
           Expanded(
@@ -454,7 +537,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     );
   }
 
-  Widget _buildGoalTimeTile() {
+  Widget _buildGoalTimeTile(DateTime normalizedGoal) {
     return ListTile(
       tileColor: Colors.indigo.withOpacity(0.05),
       title: const Text(
@@ -466,7 +549,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         textBaseline: TextBaseline.alphabetic,
         children: [
           Text(
-            DateFormat('HH:mm').format(goalTime),
+            DateFormat('HH:mm').format(normalizedGoal),
             style: const TextStyle(
               fontSize: 36,
               fontWeight: FontWeight.bold,
@@ -574,6 +657,19 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     );
   }
 
+  // アイコン自動選択
+  IconData _getTaskIcon(String name) {
+    String n = name.toLowerCase();
+    if (n.contains('風呂') || n.contains('洗い')) return Icons.bathtub_outlined;
+    if (n.contains('walk') || n.contains('歩')) return Icons.directions_walk;
+    if (n.contains('バス') || n.contains('電車')) return Icons.directions_bus;
+    if (n.contains('スッキリ')) return Icons.face_retouching_natural;
+    if (n.contains('spare') || n.contains('余裕')) return Icons.weekend_outlined;
+    if (n.contains('飯') || n.contains('食')) return Icons.restaurant;
+    if (n.contains('服') || n.contains('着')) return Icons.checkroom;
+    return Icons.task_alt;
+  }
+
   Widget _buildTaskTile(Task task, DateTime startTime, int index) {
     final now = DateTime.now();
     final endTime = startTime.add(Duration(minutes: task.duration));
@@ -588,13 +684,34 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         color: Colors.red,
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: const Icon(Icons.delete, color: Colors.white),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('削除', style: TextStyle(color: Colors.white)),
+            Icon(Icons.delete, color: Colors.white),
+          ],
+        ),
       ),
       onDismissed: (_) {
+        final deletedTask = task;
         setState(() {
           tasks.removeAt(index);
           _saveData();
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${deletedTask.name} を削除しました'),
+            action: SnackBarAction(
+              label: '元に戻す',
+              onPressed: () {
+                setState(() {
+                  tasks.insert(index, deletedTask);
+                  _saveData();
+                });
+              },
+            ),
+          ),
+        );
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -618,20 +735,26 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           ),
           title: Row(
             children: [
-              Text(
-                task.name,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  decoration: task.isDone ? TextDecoration.lineThrough : null,
-                  color: task.isDone
-                      ? Colors.grey
-                      : (isLate ? Colors.red : Colors.black),
+              Icon(
+                _getTaskIcon(task.name),
+                size: 18,
+                color: task.isDone ? Colors.grey : Colors.indigo,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  task.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    decoration: task.isDone ? TextDecoration.lineThrough : null,
+                    color: task.isDone
+                        ? Colors.grey
+                        : (isLate ? Colors.red : Colors.black),
+                  ),
                 ),
               ),
-              if (isCurrent) ...[
-                const SizedBox(width: 8),
+              if (isCurrent)
                 const Badge(label: Text('NOW'), backgroundColor: Colors.blue),
-              ],
             ],
           ),
           subtitle: isCurrent
