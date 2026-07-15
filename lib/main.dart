@@ -69,6 +69,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   Map<String, Map<String, dynamic>> templates = {};
   Map<String, int> quickMaster = {'Walking': 20, '風呂': 30, 'スッキリ': 10};
   int bufferMinutes = 0;
+  bool isActive = false;
   Timer? _timer;
 
   @override
@@ -76,7 +77,30 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     super.initState();
     _loadData();
     _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        final now = DateTime.now();
+        final normalizedGoal = DateTime(
+          now.year,
+          now.month,
+          now.day,
+          goalTime.hour,
+          goalTime.minute,
+        );
+
+        // 目標時刻から1時間過ぎたら自動でオフにする
+        if (isActive &&
+            now.isAfter(normalizedGoal.add(const Duration(hours: 1)))) {
+          setState(() {
+            isActive = false;
+            for (var t in tasks) {
+              t.isDone = false;
+            }
+            _saveData();
+          });
+        } else {
+          setState(() {});
+        }
+      }
     });
   }
 
@@ -86,7 +110,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     super.dispose();
   }
 
-  // --- データの保存 ---
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
     final String encodedData = json.encode({
@@ -96,11 +119,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       'templates': templates,
       'quickMaster': quickMaster,
       'bufferMinutes': bufferMinutes,
+      'isActive': isActive,
     });
     await prefs.setString('app_data', encodedData);
   }
 
-  // --- データの読み込み ---
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     final String? data = prefs.getString('app_data');
@@ -121,11 +144,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           quickMaster = Map<String, int>.from(decodedData['quickMaster']);
         }
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
+        isActive = decodedData['isActive'] ?? false;
       });
     }
   }
 
-  // --- テンプレート操作 ---
   void _saveCurrentAsTemplate() {
     String templateName = '';
     showDialog(
@@ -170,6 +193,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           .map((item) => Task.fromJson(item))
           .toList();
       bufferMinutes = data['bufferMinutes'] ?? 0;
+      isActive = false; // 読み込み時は非アクティブに
       _saveData();
     });
   }
@@ -224,7 +248,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     );
   }
 
-  // --- 予定の追加・編集ダイアログ ---
   void _showTaskDialog({Task? task, int? index}) {
     String newName = task?.name ?? '';
     int newDuration = task?.duration ?? 15;
@@ -273,7 +296,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         ),
                       ),
                       ActionChip(
-                        backgroundColor: Colors.blue.withOpacity(0.1),
+                        // ★修正箇所①: withOpacity -> withValues
+                        backgroundColor: Colors.blue.withValues(alpha: 0.1),
                         avatar: const Icon(Icons.add, size: 16),
                         label: const Text('登録'),
                         onPressed: () {
@@ -343,9 +367,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-
-    // ★重要：日付の罠を解消
-    // 目標時刻の日付を「今日」に強制的に合わせる
     DateTime normalizedGoal = DateTime(
       now.year,
       now.month,
@@ -370,6 +391,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         Duration(minutes: tasks[i].duration + bufferMinutes),
       );
     }
+
+    final bool allDone = tasks.isNotEmpty && tasks.every((t) => t.isDone);
 
     return Scaffold(
       appBar: AppBar(
@@ -448,54 +471,137 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       ),
       body: Column(
         children: [
-          // 全タスク完了時のバナー
-          if (tasks.isNotEmpty && tasks.every((t) => t.isDone))
+          // --- 動的バナーエリア ---
+          if (!isActive)
+            Container(
+              width: double.infinity,
+              color: Colors.indigo.withValues(alpha: 0.8),
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    isActive = true;
+                    for (var t in tasks) {
+                      t.isDone = false;
+                    }
+                    _saveData();
+                  });
+                },
+                icon: const Icon(Icons.play_arrow, color: Colors.white),
+                label: const Text(
+                  '準備を開始する',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            )
+          else
             Builder(
               builder: (context) {
-                // 目標時刻までの残り時間を計算
                 final diff = normalizedGoal.difference(now).inMinutes;
                 final bool isEarly = diff > 0;
 
+                // 全タスク完了時
+                if (allDone) {
+                  return Container(
+                    width: double.infinity,
+                    color: isEarly ? Colors.teal : Colors.green,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 4,
+                      horizontal: 16,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isEarly ? Icons.timer_outlined : Icons.celebration,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: RichText(
+                            text: TextSpan(
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                              ),
+                              children: [
+                                if (isEarly) ...[
+                                  const TextSpan(text: '予定時刻の '),
+                                  TextSpan(
+                                    text: '$diff 分前',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                  const TextSpan(text: ' に準備完了！'),
+                                ] else ...[
+                                  const TextSpan(
+                                    text: '準備完了！いってらっしゃい！',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              isActive = false;
+                              for (var t in tasks) {
+                                t.isDone = false;
+                              }
+                              _saveData();
+                            });
+                          },
+                          child: const Text(
+                            '終了',
+                            style: TextStyle(
+                              color: Colors.white,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                // 準備中（未完了タスクあり）
                 return Container(
                   width: double.infinity,
-                  color: isEarly ? Colors.teal : Colors.green, // 余裕がある時は少し色を変える
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 10,
-                    horizontal: 16,
-                  ),
+                  color: Colors.indigo.withValues(alpha: 0.9),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        isEarly ? Icons.timer_outlined : Icons.celebration,
+                      const Icon(
+                        Icons.directions_run,
                         color: Colors.white,
+                        size: 18,
                       ),
-                      const SizedBox(width: 10),
-                      RichText(
-                        text: TextSpan(
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                          ),
-                          children: [
-                            if (isEarly) ...[
-                              const TextSpan(text: '予定時刻の '),
-                              TextSpan(
-                                text: '$diff 分前',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 20,
-                                  decoration: TextDecoration.underline,
-                                ),
-                              ),
-                              const TextSpan(text: ' に準備完了です！'),
-                            ] else ...[
-                              const TextSpan(
-                                text: '準備完了！いってらっしゃい！',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ],
+                      const SizedBox(width: 8),
+                      const Text(
+                        '準備実行中...',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            isActive = false;
+                            _saveData();
+                          });
+                        },
+                        child: const Text(
+                          '中止',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                       ),
                     ],
@@ -510,9 +616,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             child: ReorderableListView.builder(
               buildDefaultDragHandles: false,
               itemCount: tasks.length,
-              onReorder: (oldIndex, newIndex) {
+              // ★修正箇所②: onReorder -> onReorderItem (index調整が不要に)
+              onReorderItem: (oldIndex, newIndex) {
                 setState(() {
-                  if (newIndex > oldIndex) newIndex -= 1;
                   final item = tasks.removeAt(oldIndex);
                   tasks.insert(newIndex, item);
                   _saveData();
@@ -539,7 +645,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
   Widget _buildGoalTimeTile(DateTime normalizedGoal) {
     return ListTile(
-      tileColor: Colors.indigo.withOpacity(0.05),
+      tileColor: Colors.indigo.withValues(alpha: 0.05),
       title: const Text(
         '目標時刻',
         style: TextStyle(fontSize: 12, color: Colors.grey),
@@ -602,7 +708,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   Widget _buildBufferPanel() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      color: Colors.orange.withOpacity(0.05),
+      color: Colors.orange.withValues(alpha: 0.05),
       child: Column(
         children: [
           Row(
@@ -624,16 +730,18 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     .map(
                       (m) => ChoiceChip(
                         label: Text(
-                          '${m}分',
+                          '$m分',
                           style: const TextStyle(fontSize: 10),
                         ),
                         selected: bufferMinutes == m,
                         onSelected: (selected) {
-                          if (selected)
+                          // ★修正箇所③: if文を {} で囲む
+                          if (selected) {
                             setState(() {
                               bufferMinutes = m;
                               _saveData();
                             });
+                          }
                         },
                       ),
                     )
@@ -657,7 +765,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     );
   }
 
-  // アイコン自動選択
   IconData _getTaskIcon(String name) {
     String n = name.toLowerCase();
     if (n.contains('風呂') || n.contains('洗い')) return Icons.bathtub_outlined;
@@ -717,7 +824,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: ListTile(
           onTap: () => _showTaskDialog(task: task, index: index),
-          tileColor: isCurrent ? Colors.blue.withOpacity(0.1) : null,
+          tileColor: isCurrent ? Colors.blue.withValues(alpha: 0.1) : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
             side: isCurrent
