@@ -14,19 +14,27 @@ class Task {
   String name;
   int duration;
   bool isDone;
+  bool isSkipped; // 追加
 
-  Task({required this.name, required this.duration, this.isDone = false});
+  Task({
+    required this.name,
+    required this.duration,
+    this.isDone = false,
+    this.isSkipped = false, // 追加
+  });
 
   Map<String, dynamic> toJson() => {
     'name': name,
     'duration': duration,
     'isDone': isDone,
+    'isSkipped': isSkipped, // 追加
   };
 
   factory Task.fromJson(Map<String, dynamic> json) => Task(
     name: json['name'],
     duration: json['duration'],
     isDone: json['isDone'] ?? false,
+    isSkipped: json['isSkipped'] ?? false, // 追加
   );
 }
 
@@ -374,17 +382,39 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       goalTime.hour,
       goalTime.minute,
     );
+    if (normalizedGoal.isBefore(now)) {
+      normalizedGoal = normalizedGoal.add(const Duration(days: 1));
+    }
+    // --- 不足時間の計算ロジック ---
+    // 1. まだやっていない（未完了かつ未スキップ）タスクの合計時間を出す
+    int remainingRequiredMinutes = tasks
+        .where((t) => !t.isDone && !t.isSkipped)
+        .fold(0, (sum, t) => sum + t.duration);
 
+    // 2. タスク間のバッファも加算（未完了タスクが2つ以上ある場合）
+    int activeTasksCount = tasks.where((t) => !t.isDone && !t.isSkipped).length;
+    int remainingBuffer = activeTasksCount > 1
+        ? (activeTasksCount - 1) * bufferMinutes
+        : 0;
+    int totalNeededMinutes = remainingRequiredMinutes + remainingBuffer;
+
+    // 3. 目標までの残り時間（分）
+    int minutesUntilGoal = normalizedGoal.difference(now).inMinutes;
+
+    // 4. 不足している時間
+    int timeDeficit = totalNeededMinutes - minutesUntilGoal;
+    // ----------------------------
+
+    // 全体の開始時刻計算（これは全タスクベースでOK）
     int tasksDuration = tasks.fold(0, (sum, item) => sum + item.duration);
     int totalBuffer = tasks.length > 1 ? (tasks.length - 1) * bufferMinutes : 0;
     int totalDuration = tasksDuration + totalBuffer;
-
     DateTime startTime = normalizedGoal.subtract(
       Duration(minutes: totalDuration),
     );
+
     List<DateTime> calculatedTimes = [];
     DateTime nextStartTime = startTime;
-
     for (int i = 0; i < tasks.length; i++) {
       calculatedTimes.add(nextStartTime);
       nextStartTime = nextStartTime.add(
@@ -392,7 +422,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       );
     }
 
-    final bool allDone = tasks.isNotEmpty && tasks.every((t) => t.isDone);
+    final bool allFinished =
+        tasks.isNotEmpty && tasks.every((t) => t.isDone || t.isSkipped);
 
     return Scaffold(
       appBar: AppBar(
@@ -422,6 +453,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 setState(() {
                   for (var t in tasks) {
                     t.isDone = false;
+                    t.isSkipped = false; // スキップもリセット
                   }
                   _saveData();
                 });
@@ -482,6 +514,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     isActive = true;
                     for (var t in tasks) {
                       t.isDone = false;
+                      t.isSkipped = false; // スキップもリセット
                     }
                     _saveData();
                   });
@@ -502,8 +535,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 final diff = normalizedGoal.difference(now).inMinutes;
                 final bool isEarly = diff > 0;
 
-                // 全タスク完了時
-                if (allDone) {
+                if (allFinished) {
                   return Container(
                     width: double.infinity,
                     color: isEarly ? Colors.teal : Colors.green,
@@ -572,40 +604,68 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 }
 
                 // 準備中（未完了タスクあり）
-                return Container(
-                  width: double.infinity,
-                  color: Colors.indigo.withValues(alpha: 0.9),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.directions_run,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        '準備実行中...',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
+                return Column(
+                  children: [
+                    if (isActive && timeDeficit > 0 && !allFinished)
+                      Container(
+                        width: double.infinity,
+                        color: Colors.redAccent,
+                        padding: const EdgeInsets.all(8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.warning_amber_rounded,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '時間が $timeDeficit 分足りません！予定をスキップしてください',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            isActive = false;
-                            _saveData();
-                          });
-                        },
-                        child: const Text(
-                          '中止',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
+                    Container(
+                      width: double.infinity,
+                      color: Colors.indigo.withValues(alpha: 0.9),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.directions_run,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            '準備実行中...',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: () => setState(() {
+                              isActive = false;
+                              _saveData();
+                            }),
+                            child: const Text(
+                              '中止',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -824,46 +884,73 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: ListTile(
           onTap: () => _showTaskDialog(task: task, index: index),
-          tileColor: isCurrent ? Colors.blue.withValues(alpha: 0.1) : null,
+          tileColor: isCurrent && !task.isSkipped
+              ? Colors.blue.withValues(alpha: 0.1)
+              : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
-            side: isCurrent
+            side: isCurrent && !task.isSkipped
                 ? const BorderSide(color: Colors.blue, width: 2)
                 : BorderSide.none,
           ),
-          leading: Checkbox(
-            value: task.isDone,
-            onChanged: (bool? value) {
-              setState(() {
-                task.isDone = value ?? false;
-                _saveData();
-              });
-            },
-          ),
+          // スキップ中はチェックボックスを隠す（または無効なアイコンにする）
+          leading: task.isSkipped
+              ? const Icon(Icons.block, color: Colors.grey)
+              : Checkbox(
+                  value: task.isDone,
+                  onChanged: (bool? value) {
+                    setState(() {
+                      task.isDone = value ?? false;
+                      _saveData();
+                    });
+                  },
+                ),
           title: Row(
             children: [
               Icon(
-                _getTaskIcon(task.name),
+                task.isSkipped ? Icons.redo : _getTaskIcon(task.name),
                 size: 18,
-                color: task.isDone ? Colors.grey : Colors.indigo,
+                color: (task.isDone || task.isSkipped)
+                    ? Colors.grey
+                    : (isLate ? Colors.red : Colors.indigo),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  task.name,
+                  task.name + (task.isSkipped ? ' (スキップ中)' : ''),
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    decoration: task.isDone ? TextDecoration.lineThrough : null,
-                    color: task.isDone
+                    decoration: (task.isDone || task.isSkipped)
+                        ? TextDecoration.lineThrough
+                        : null,
+                    color: (task.isDone || task.isSkipped)
                         ? Colors.grey
                         : (isLate ? Colors.red : Colors.black),
+                    fontStyle: task.isSkipped
+                        ? FontStyle.italic
+                        : FontStyle.normal,
                   ),
                 ),
               ),
-              if (isCurrent)
+              // --- スキップ / 戻す ボタンの切り替え ---
+              if (isActive && !task.isDone)
+                IconButton(
+                  icon: Icon(
+                    task.isSkipped ? Icons.replay : Icons.fast_forward,
+                    size: 20,
+                    color: task.isSkipped ? Colors.blue : Colors.orange,
+                  ),
+                  tooltip: task.isSkipped ? '予定を復活させる' : 'この予定をスキップ',
+                  onPressed: () => setState(() {
+                    task.isSkipped = !task.isSkipped; // 状態を反転させる
+                    _saveData();
+                  }),
+                ),
+              if (isCurrent && !task.isSkipped)
                 const Badge(label: Text('NOW'), backgroundColor: Colors.blue),
             ],
           ),
+          // ... (subtitle と trailing はそのまま)
           subtitle: isCurrent
               ? Text(
                   'あと ${endTime.difference(now).inMinutes + 1} 分で終了予定',
