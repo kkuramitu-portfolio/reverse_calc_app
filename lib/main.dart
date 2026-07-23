@@ -4,8 +4,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'dart:async';
+import 'package:url_launcher/url_launcher.dart'; // URL起動用
 
 void main() {
+  // 起動時の初期化を確実にする
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ReverseCalcApp());
 }
 
@@ -14,27 +17,27 @@ class Task {
   String name;
   int duration;
   bool isDone;
-  bool isSkipped; // 追加
+  bool isSkipped;
 
   Task({
     required this.name,
     required this.duration,
     this.isDone = false,
-    this.isSkipped = false, // 追加
+    this.isSkipped = false,
   });
 
   Map<String, dynamic> toJson() => {
     'name': name,
     'duration': duration,
     'isDone': isDone,
-    'isSkipped': isSkipped, // 追加
+    'isSkipped': isSkipped,
   };
 
   factory Task.fromJson(Map<String, dynamic> json) => Task(
     name: json['name'],
     duration: json['duration'],
     isDone: json['isDone'] ?? false,
-    isSkipped: json['isSkipped'] ?? false, // 追加
+    isSkipped: json['isSkipped'] ?? false,
   );
 }
 
@@ -95,7 +98,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           goalTime.minute,
         );
 
-        // 目標時刻から1時間過ぎたら自動でオフにする
         if (isActive &&
             now.isAfter(normalizedGoal.add(const Duration(hours: 1)))) {
           setState(() {
@@ -116,6 +118,18 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  // URLを開くヘルパー関数
+  Future<void> _launchURL(String urlString) async {
+    final Uri url = Uri.parse(urlString);
+    if (!await launchUrl(url)) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('開けませんでした: $urlString')));
+      }
+    }
   }
 
   Future<void> _saveData() async {
@@ -174,7 +188,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           ),
           ElevatedButton(
             onPressed: () {
-              if (templateName.isEmpty) return;
+              if (templateName.isEmpty) {
+                return;
+              }
               setState(() {
                 goalLabel = templateName;
                 templates[templateName] = {
@@ -201,7 +217,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           .map((item) => Task.fromJson(item))
           .toList();
       bufferMinutes = data['bufferMinutes'] ?? 0;
-      isActive = false; // 読み込み時は非アクティブに
+      isActive = false;
       _saveData();
     });
   }
@@ -304,7 +320,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         ),
                       ),
                       ActionChip(
-                        // ★修正箇所①: withOpacity -> withValues
                         backgroundColor: Colors.blue.withValues(alpha: 0.1),
                         avatar: const Icon(Icons.add, size: 16),
                         label: const Text('登録'),
@@ -353,7 +368,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             ),
             ElevatedButton(
               onPressed: () {
-                if (newName.isEmpty) return;
+                if (newName.isEmpty) {
+                  return;
+                }
                 setState(() {
                   if (isEditing) {
                     tasks[index!] = Task(name: newName, duration: newDuration);
@@ -385,27 +402,18 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     if (normalizedGoal.isBefore(now)) {
       normalizedGoal = normalizedGoal.add(const Duration(days: 1));
     }
-    // --- 不足時間の計算ロジック ---
-    // 1. まだやっていない（未完了かつ未スキップ）タスクの合計時間を出す
+
     int remainingRequiredMinutes = tasks
         .where((t) => !t.isDone && !t.isSkipped)
         .fold(0, (sum, t) => sum + t.duration);
-
-    // 2. タスク間のバッファも加算（未完了タスクが2つ以上ある場合）
     int activeTasksCount = tasks.where((t) => !t.isDone && !t.isSkipped).length;
     int remainingBuffer = activeTasksCount > 1
         ? (activeTasksCount - 1) * bufferMinutes
         : 0;
     int totalNeededMinutes = remainingRequiredMinutes + remainingBuffer;
-
-    // 3. 目標までの残り時間（分）
     int minutesUntilGoal = normalizedGoal.difference(now).inMinutes;
-
-    // 4. 不足している時間
     int timeDeficit = totalNeededMinutes - minutesUntilGoal;
-    // ----------------------------
 
-    // 全体の開始時刻計算（これは全タスクベースでOK）
     int tasksDuration = tasks.fold(0, (sum, item) => sum + item.duration);
     int totalBuffer = tasks.length > 1 ? (tasks.length - 1) * bufferMinutes : 0;
     int totalDuration = tasksDuration + totalBuffer;
@@ -453,10 +461,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 setState(() {
                   for (var t in tasks) {
                     t.isDone = false;
-                    t.isSkipped = false; // スキップもリセット
+                    t.isSkipped = false;
                   }
                   _saveData();
                 });
+              } else if (value == 'feedback') {
+                _launchURL(
+                  'https://docs.google.com/forms/d/e/1FAIpQLSfwPKdGwoEvtr3VvRbvYGuMjd6Gb0_VHIs83OCQo_Cvltv5-A/viewform?usp=pp_url&entry.1476558753=%E4%BA%88%E5%AE%9A%E9%80%86%E7%AE%97%E3%82%A2%E3%83%97%E3%83%AA',
+                );
               } else {
                 _loadTemplate(value);
               }
@@ -493,6 +505,16 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               ...templates.keys.map(
                 (name) => PopupMenuItem(value: name, child: Text(name)),
               ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'feedback',
+                child: Row(
+                  children: [
+                    Icon(Icons.feedback_outlined, color: Colors.blue),
+                    Text(' フィードバックを送る'),
+                  ],
+                ),
+              ),
             ],
           ),
           Padding(
@@ -503,7 +525,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       ),
       body: Column(
         children: [
-          // --- 動的バナーエリア ---
           if (!isActive)
             Container(
               width: double.infinity,
@@ -514,7 +535,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     isActive = true;
                     for (var t in tasks) {
                       t.isDone = false;
-                      t.isSkipped = false; // スキップもリセット
+                      t.isSkipped = false;
                     }
                     _saveData();
                   });
@@ -603,7 +624,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   );
                 }
 
-                // 準備中（未完了タスクあり）
                 return Column(
                   children: [
                     if (isActive && timeDeficit > 0 && !allFinished)
@@ -676,7 +696,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             child: ReorderableListView.builder(
               buildDefaultDragHandles: false,
               itemCount: tasks.length,
-              // ★修正箇所②: onReorder -> onReorderItem (index調整が不要に)
               onReorderItem: (oldIndex, newIndex) {
                 setState(() {
                   final item = tasks.removeAt(oldIndex);
@@ -795,7 +814,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         ),
                         selected: bufferMinutes == m,
                         onSelected: (selected) {
-                          // ★修正箇所③: if文を {} で囲む
                           if (selected) {
                             setState(() {
                               bufferMinutes = m;
@@ -893,7 +911,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 ? const BorderSide(color: Colors.blue, width: 2)
                 : BorderSide.none,
           ),
-          // スキップ中はチェックボックスを隠す（または無効なアイコンにする）
           leading: task.isSkipped
               ? const Icon(Icons.block, color: Colors.grey)
               : Checkbox(
@@ -932,7 +949,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   ),
                 ),
               ),
-              // --- スキップ / 戻す ボタンの切り替え ---
               if (isActive && !task.isDone)
                 IconButton(
                   icon: Icon(
@@ -942,7 +958,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   ),
                   tooltip: task.isSkipped ? '予定を復活させる' : 'この予定をスキップ',
                   onPressed: () => setState(() {
-                    task.isSkipped = !task.isSkipped; // 状態を反転させる
+                    task.isSkipped = !task.isSkipped;
                     _saveData();
                   }),
                 ),
@@ -950,7 +966,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 const Badge(label: Text('NOW'), backgroundColor: Colors.blue),
             ],
           ),
-          // ... (subtitle と trailing はそのまま)
           subtitle: isCurrent
               ? Text(
                   'あと ${endTime.difference(now).inMinutes + 1} 分で終了予定',
