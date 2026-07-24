@@ -5,10 +5,15 @@ import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'dart:async';
 import 'package:url_launcher/url_launcher.dart'; // URL起動用
+import 'notification_service.dart';
 
-void main() {
-  // 起動時の初期化を確実にする
+Future<void> main() async {
+  // Flutterの初期化を確実にする
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 通知サービスの初期化
+  await NotificationService().init();
+
   runApp(const ReverseCalcApp());
 }
 
