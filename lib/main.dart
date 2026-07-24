@@ -392,6 +392,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
+
+    // 1. まずは「今日」の目標時刻を作る
     DateTime normalizedGoal = DateTime(
       now.year,
       now.month,
@@ -399,8 +401,17 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       goalTime.hour,
       goalTime.minute,
     );
-    if (normalizedGoal.isBefore(now)) {
+
+    // 2. 【修正ポイント】日付の切り替え判定を賢くする
+    // 目標時刻から「6時間以上」過ぎている場合のみ、翌日の予定とみなす
+    // （例：17:00が目標で現在17:09なら、差は9分なので「今日」のまま）
+    // （例：17:00が目標で現在23:30なら、6時間半過ぎているので「明日」とみなす）
+    if (now.difference(normalizedGoal).inHours >= 6) {
       normalizedGoal = normalizedGoal.add(const Duration(days: 1));
+    }
+    // 逆に、目標が「今」より18時間以上先なら、それは「昨日」の目標の残りカスかもしれないので調整
+    else if (normalizedGoal.difference(now).inHours >= 18) {
+      normalizedGoal = normalizedGoal.subtract(const Duration(days: 1));
     }
 
     int remainingRequiredMinutes = tasks
