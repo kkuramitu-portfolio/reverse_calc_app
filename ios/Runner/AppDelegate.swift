@@ -1,14 +1,15 @@
 import UIKit
 import Flutter
-import flutter_local_notifications // 追加
+import flutter_local_notifications // 通知プラグインをインポート
 
-@UIApplicationMain
+@main // @UIApplicationMain から最新の @main に変更
 @objc class AppDelegate: FlutterAppDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-  ) {
-    // 通知の初期化設定
+  ) -> Bool { // ← ここに "-> Bool" を追加しました
+    
+    // 通知プラグインの登録（バックグラウンド動作を安定させるため）
     FlutterLocalNotificationsPlugin.setPluginRegistrantCallback { (registry) in
         GeneratedPluginRegistrant.register(with: registry)
     }
