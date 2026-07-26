@@ -52,7 +52,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^6.0.0
+  flutter_lints: ^5.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -103,3 +103,6 @@ flutter_launcher_icons:
   # Android用の背景色（アダプティブアイコン対応）
   adaptive_icon_background: "#3F51B5" # indigo系の色
   adaptive_icon_foreground: "assets/icon.png"
+
+dependency_overrides:
+  device_info_plus: 10.1.0
