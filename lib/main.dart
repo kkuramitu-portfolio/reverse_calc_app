@@ -79,7 +79,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   int bufferMinutes = 0;
   bool isActive = false;
   bool isCompleted = false;
-  String _announcement = ""; // 💡 お知らせ内容を保持する変数
+  String _announcement = "";
+  String _lastReadAnnouncement = ""; // 💡 お知らせ内容を保持する変数
   Timer? _timer;
 
   @override
@@ -117,9 +118,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
   // 💡 お知らせをチェックする関数（デモ用に文字をセット）
   void _checkUpdates() {
+    String newAnnouncement = "【お知らせ】最新版 v1.0.2 が公開されました！Googleドライブから更新してください。";
+
     setState(() {
-      // 本来はここで外部JSONを読み込みますが、まずは手動でセットします
-      _announcement = "【お知らせ】最新版 v1.0.2 が公開されました！Googleドライブから更新してください。";
+      // 💡 取得したお知らせが、最後に閉じたものと違う場合のみ表示する
+      if (newAnnouncement != _lastReadAnnouncement) {
+        _announcement = newAnnouncement;
+      } else {
+        _announcement = "";
+      }
     });
   }
 
@@ -152,6 +159,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('last_read_announcement', _lastReadAnnouncement);
     await prefs.setString(
       'app_data',
       json.encode({
@@ -163,6 +171,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         'bufferMinutes': bufferMinutes,
         'isActive': isActive,
         'isCompleted': isCompleted,
+        'last_read_announcement': _lastReadAnnouncement,
       }),
     );
   }
@@ -187,6 +196,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
         isActive = decodedData['isActive'] ?? false;
         isCompleted = decodedData['isCompleted'] ?? false;
+        _lastReadAnnouncement = prefs.getString('last_read_announcement') ?? "";
       });
     }
   }
@@ -536,7 +546,13 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, size: 16),
-                    onPressed: () => setState(() => _announcement = ""),
+                    onPressed: () {
+                      setState(() {
+                        _lastReadAnnouncement = _announcement; // 💡 今の内容を既読にする
+                        _announcement = ""; // 画面から消す
+                      });
+                      _saveData(); // 💡 既読状態を保存
+                    },
                   ),
                 ],
               ),
