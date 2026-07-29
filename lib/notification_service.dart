@@ -1,18 +1,18 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:flutter/foundation.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  FlutterLocalNotificationsPlugin? _plugin;
-  bool _isInitialized = false;
+  // Webでのエラーを避けるため dynamic で保持
+  dynamic _plugin;
 
   Future<void> init() async {
-    if (kIsWeb) return; // Webなら即終了
+    if (kIsWeb) return;
 
     try {
       _plugin = FlutterLocalNotificationsPlugin();
@@ -35,20 +35,30 @@ class NotificationService {
             iOS: initializationSettingsDarwin,
           );
 
-      await _plugin?.initialize(initializationSettings);
-      _isInitialized = true;
+      await _plugin.initialize(initializationSettings);
     } catch (e) {
       debugPrint("Notification init error: $e");
     }
   }
 
+  // 全ての通知をキャンセル
   Future<void> cancelAll() async {
-    // Web環境、または初期化されていない場合は何もしない
-    if (kIsWeb || !_isInitialized || _plugin == null) return;
+    if (kIsWeb || _plugin == null) return;
     try {
-      await _plugin?.cancelAll();
+      await _plugin.cancelAll();
     } catch (e) {
       debugPrint("Cancel error: $e");
+    }
+  }
+
+  // 💡 ここが重要！特定のIDの通知だけをキャンセルする本物の処理
+  Future<void> cancelNotification(int id) async {
+    if (kIsWeb || _plugin == null) return;
+    try {
+      await _plugin.cancel(id); // プラグインに対して「このIDを消して」と命令
+      debugPrint("通知 ID: $id をキャンセルしました");
+    } catch (e) {
+      debugPrint("Cancel single error: $e");
     }
   }
 
@@ -58,11 +68,10 @@ class NotificationService {
     required String body,
     required DateTime scheduledDate,
   }) async {
-    // Web環境、または初期化されていない場合は何もしない
-    if (kIsWeb || !_isInitialized || _plugin == null) return;
+    if (kIsWeb || _plugin == null) return;
 
     try {
-      await _plugin?.zonedSchedule(
+      await _plugin.zonedSchedule(
         id,
         title,
         body,

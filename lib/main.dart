@@ -82,19 +82,16 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   bool isCompleted = false;
   String _announcement = "";
   String _lastReadAnnouncementId = "";
-  String _currentAnnouncementId = ""; // 💡 お知らせ内容を保持する変数
+  String _currentAnnouncementId = "";
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-
-    // 💡 読み込みが終わってから判定する、この1セットだけでOKです
     _loadData().then((_) {
       _checkUpdates();
     });
 
-    // 1分ごとのタイマー
     _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) {
         final now = DateTime.now();
@@ -123,9 +120,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     super.dispose();
   }
 
-  // 💡 お知らせをチェックする関数（デモ用に文字をセット）
   Future<void> _checkUpdates() async {
-    // 💡 URLの末尾に ?t=タイムスタンプ を付けることで、常に最新を読み込ませます（キャッシュ回避）
     final String url =
         "https://gist.githubusercontent.com/kkuramitu-portfolio/d1eaedbafb6d60a391ad3a774501116f/raw/gistfile1.txt?t=${DateTime.now().millisecondsSinceEpoch}";
 
@@ -134,13 +129,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         String newMessage = data['message'];
-        String newId = data['id']; // 💡 JSONからIDを取得
+        String newId = data['id'];
 
         if (mounted) {
           setState(() {
-            _currentAnnouncementId = newId; // 💡 取得したIDをキープ
-
-            // 保存されている既読IDと、今取得したIDが違う場合のみ表示
+            _currentAnnouncementId = newId;
             if (newId != _lastReadAnnouncementId) {
               _announcement = newMessage;
             } else {
@@ -183,7 +176,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('last_read_announcement_id', _lastReadAnnouncementId);
     await prefs.setString(
       'app_data',
       json.encode({
@@ -211,18 +203,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         tasks = (decodedData['tasks'] as List)
             .map((item) => Task.fromJson(item))
             .toList();
-
-        // 💡 波線が出ていた部分を { } で囲みました
         if (decodedData['templates'] != null) {
           templates = Map<String, Map<String, dynamic>>.from(
             decodedData['templates'],
           );
         }
-
         if (decodedData['quickMaster'] != null) {
           quickMaster = Map<String, int>.from(decodedData['quickMaster']);
         }
-
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
         isActive = decodedData['isActive'] ?? false;
         isCompleted = decodedData['isCompleted'] ?? false;
@@ -253,7 +241,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               setState(() {
                 goalLabel = name;
                 templates[name] = {
-                  'goalLabel': name,
+                  'goalLabel': goalLabel,
                   'tasks': tasks.map((t) => t.toJson()).toList(),
                   'bufferMinutes': bufferMinutes,
                 };
@@ -269,11 +257,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   }
 
   void _loadTemplate(String name) {
-    // 💡 安全策：もし templates にその名前がなければ何もしない
     if (!templates.containsKey(name)) return;
-
     setState(() {
-      final data = templates[name]!; // ここでは containsKey で確認済みなので安全
+      final data = templates[name]!;
       goalLabel = data['goalLabel'] ?? name;
       tasks = (data['tasks'] as List)
           .map((item) => Task.fromJson(item))
@@ -307,8 +293,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                           onPressed: () {
                             setState(() {
                               templates.remove(n);
-                              _saveData();
                             });
+                            _saveData();
                             setDialogState(() {});
                           },
                         ),
@@ -359,15 +345,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                           onPressed: () {
                             setState(() {
                               tasks.add(Task(name: e.key, duration: e.value));
-                              _saveData();
                             });
+                            _saveData();
                             Navigator.pop(context);
                           },
                           onDeleted: () {
                             setState(() {
                               quickMaster.remove(e.key);
-                              _saveData();
                             });
+                            _saveData();
                             setDialogState(() {});
                           },
                           deleteIconColor: Colors.grey,
@@ -381,8 +367,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                           if (name.isNotEmpty) {
                             setState(() {
                               quickMaster[name] = duration;
-                              _saveData();
                             });
+                            _saveData();
                             setDialogState(() {});
                           }
                         },
@@ -423,8 +409,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   } else {
                     tasks.add(Task(name: name, duration: duration));
                   }
-                  _saveData();
                 });
+                _saveData();
                 Navigator.pop(context);
               },
               child: Text(isEditing ? '更新' : '追加'),
@@ -492,13 +478,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 });
                 _saveData();
               } else if (v == 'show_announcement') {
-                // 💡 ここでダイアログを表示
                 showDialog(
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text('最新のお知らせ'),
-                    content: const Text(
-                      "【お知らせ】最新版 v1.0.2 が公開されました！Googleドライブから更新してください。",
+                    content: Text(
+                      _announcement.isNotEmpty
+                          ? _announcement
+                          : "現在お知らせはありません。",
                     ),
                     actions: [
                       TextButton(
@@ -513,7 +500,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   'https://docs.google.com/forms/d/e/1FAIpQLSfwPKdGwoEvtr3VvRbvYGuMjd6Gb0_VHIs83OCQo_Cvltv5-A/viewform?usp=pp_url&entry.1476558753=%E4%BA%88%E5%AE%9A%E9%80%86%E7%AE%97%E3%82%A2%E3%83%97%E3%83%AA',
                 );
               } else {
-                // 💡 上記のどれにも当てはまらない場合（保存したテンプレート名の場合）のみ実行
                 _loadTemplate(v);
               }
             },
@@ -562,7 +548,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                       color: Colors.orange[700],
                       size: 18,
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: 8),
                     const Text('最新のお知らせ'),
                   ],
                 ),
@@ -573,7 +559,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   children: [
                     Icon(Icons.feedback_outlined, color: Colors.blue, size: 18),
                     SizedBox(width: 8),
-                    Text('フィードバックを送る'),
+                    const Text('フィードバックを送る'),
                   ],
                 ),
               ),
@@ -587,7 +573,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       ),
       body: Column(
         children: [
-          // 💡 お知らせバナー（内容がある場合のみ表示）
           if (_announcement.isNotEmpty)
             Container(
               width: double.infinity,
@@ -614,11 +599,10 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     icon: const Icon(Icons.close, size: 16),
                     onPressed: () {
                       setState(() {
-                        // 💡 今表示しているお知らせのIDを「既読」として記録する
                         _lastReadAnnouncementId = _currentAnnouncementId;
-                        _announcement = ""; // 画面から消す
+                        _announcement = "";
                       });
-                      _saveData(); // 💡 既読状態をスマホに保存
+                      _saveData();
                     },
                   ),
                 ],
@@ -694,6 +678,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     );
                   }
                 }
+                if (goal.isAfter(DateTime.now())) {
+                  await NotificationService().scheduleNotification(
+                    id: 999,
+                    title: '目標時刻',
+                    body: '「$goalLabel」の時間です',
+                    scheduledDate: goal,
+                  );
+                }
               } catch (e) {
                 debugPrint(e.toString());
               }
@@ -708,6 +700,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         ),
       );
     }
+
     return Column(
       children: [
         if (deficit > 0 && !allFinished && !isCompleted)
@@ -773,11 +766,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         });
                         _saveData();
                         if (!kIsWeb) {
-                          try {
-                            await NotificationService().cancelAll();
-                          } catch (e) {
-                            debugPrint(e.toString());
-                          }
+                          await NotificationService().cancelAll();
                         }
                       },
                       style: ElevatedButton.styleFrom(
@@ -839,11 +828,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         });
                         _saveData();
                         if (!kIsWeb) {
-                          try {
-                            await NotificationService().cancelAll();
-                          } catch (e) {
-                            debugPrint(e.toString());
-                          }
+                          await NotificationService().cancelAll();
                         }
                       },
                       style: ElevatedButton.styleFrom(
@@ -910,8 +895,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             child: ch!,
           ),
         );
-
-        // 💡 if文を { } で囲みます
         if (t != null) {
           setState(() {
             goalTime = DateTime(
@@ -921,8 +904,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               t.hour,
               t.minute,
             );
-            _saveData();
           });
+          _saveData();
         }
       },
     );
@@ -958,12 +941,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         ),
                         selected: bufferMinutes == m,
                         onSelected: (s) {
-                          // 💡 if文を { } で囲みます
                           if (s) {
                             setState(() {
                               bufferMinutes = m;
-                              _saveData();
                             });
+                            _saveData();
                           }
                         },
                       ),
@@ -978,10 +960,12 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             max: 15,
             divisions: 15,
             activeColor: Colors.orange,
-            onChanged: (v) => setState(() {
-              bufferMinutes = v.toInt();
+            onChanged: (v) {
+              setState(() {
+                bufferMinutes = v.toInt();
+              });
               _saveData();
-            }),
+            },
           ),
         ],
       ),
@@ -1024,8 +1008,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         final old = t;
         setState(() {
           tasks.removeAt(i);
-          _saveData();
         });
+        _saveData();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('${old.name} 削除'),
@@ -1034,8 +1018,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               onPressed: () {
                 setState(() {
                   tasks.insert(i, old);
-                  _saveData();
                 });
+                _saveData();
               },
             ),
           ),
@@ -1058,12 +1042,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               ? const Icon(Icons.block, color: Colors.grey)
               : Checkbox(
                   value: t.isDone,
-                  onChanged: (v) {
+                  onChanged: (v) async {
                     setState(() {
                       t.isDone = v ?? false;
                       if (!t.isDone) isCompleted = false;
-                      _saveData();
                     });
+                    _saveData();
+                    if (t.isDone && !kIsWeb) {
+                      await NotificationService().cancelNotification(i);
+                    }
                   },
                 ),
           title: Row(
@@ -1176,8 +1163,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             onPressed: () {
               setState(() {
                 goalLabel = n;
-                _saveData();
               });
+              _saveData();
               Navigator.pop(context);
             },
             child: const Text('更新'),
