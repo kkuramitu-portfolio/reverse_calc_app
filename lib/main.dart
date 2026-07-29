@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:url_launcher/url_launcher.dart'; // 💡 URL起動用を復活
 import 'notification_service.dart';
 
 void main() async {
@@ -79,7 +80,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   int bufferMinutes = 0;
 
   bool isActive = false;
-  bool isCompleted = false; // 💡 新しく「完了状態」を追加
+  bool isCompleted = false;
 
   Timer? _timer;
 
@@ -116,6 +117,18 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     super.dispose();
   }
 
+  // 💡 URLを開くヘルパー関数を復活
+  Future<void> _launchURL(String urlString) async {
+    final Uri url = Uri.parse(urlString);
+    if (!await launchUrl(url)) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('開けませんでした: $urlString')));
+      }
+    }
+  }
+
   DateTime _getNormalizedGoal(DateTime now) {
     DateTime goal = DateTime(
       now.year,
@@ -144,7 +157,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         'quickMaster': quickMaster,
         'bufferMinutes': bufferMinutes,
         'isActive': isActive,
-        'isCompleted': isCompleted, // 💡 保存データに追加
+        'isCompleted': isCompleted,
       }),
     );
   }
@@ -170,7 +183,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         }
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
         isActive = decodedData['isActive'] ?? false;
-        isCompleted = decodedData['isCompleted'] ?? false; // 💡 読み込みデータに追加
+        isCompleted = decodedData['isCompleted'] ?? false;
       });
     }
   }
@@ -431,17 +444,57 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   isCompleted = false;
                 });
                 _saveData();
+              } else if (v == 'feedback') {
+                // 💡 フィードバックのURL起動処理を復活
+                _launchURL(
+                  'https://docs.google.com/forms/d/e/1FAIpQLSfwPKdGwoEvtr3VvRbvYGuMjd6Gb0_VHIs83OCQo_Cvltv5-A/viewform?usp=pp_url&entry.1476558753=%E4%BA%88%E5%AE%9A%E9%80%86%E7%AE%97%E3%82%A2%E3%83%97%E3%83%AA',
+                );
               } else {
                 _loadTemplate(v);
               }
             },
+            // 💡 メニューのUIをアイコン付きの元のリッチな形に復活
             itemBuilder: (c) => [
-              const PopupMenuItem(value: 'save_new', child: Text('保存')),
-              const PopupMenuItem(value: 'manage', child: Text('管理')),
-              const PopupMenuItem(value: 'reset', child: Text('全リセット')),
+              const PopupMenuItem(
+                value: 'save_new',
+                child: Row(
+                  children: [
+                    Icon(Icons.save, color: Colors.blue),
+                    Text(' 保存'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'manage',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings, color: Colors.grey),
+                    Text(' 管理'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'reset',
+                child: Row(
+                  children: [
+                    Icon(Icons.refresh, color: Colors.orange),
+                    Text(' 全リセット'),
+                  ],
+                ),
+              ),
               const PopupMenuDivider(),
               ...templates.keys.map(
                 (n) => PopupMenuItem(value: n, child: Text(n)),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'feedback',
+                child: Row(
+                  children: [
+                    Icon(Icons.feedback_outlined, color: Colors.blue),
+                    Text(' フィードバックを送る'),
+                  ],
+                ),
               ),
             ],
           ),
@@ -503,7 +556,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           onPressed: () async {
             setState(() {
               isActive = true;
-              isCompleted = false; // 💡 開始時は未完了状態
+              isCompleted = false;
               for (var t in tasks) {
                 t.isDone = false;
                 t.isSkipped = false;
@@ -541,7 +594,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
     return Column(
       children: [
-        // 💡 完了後は時間不足警告を出さない
         if (deficit > 0 && !allFinished && !isCompleted)
           Container(
             width: double.infinity,
@@ -566,7 +618,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           builder: (context) {
             final diff = goal.difference(now).inMinutes;
 
-            // 💡 ユーザーが「完了」ボタンを押した後の状態
             if (isCompleted) {
               final color = diff > 0
                   ? Colors.teal
@@ -623,9 +674,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   ],
                 ),
               );
-            }
-            // 💡 準備中（未完了）の状態
-            else {
+            } else {
               final color = Colors.indigo.withValues(alpha: 0.9);
               return Container(
                 width: double.infinity,
@@ -657,7 +706,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                       ElevatedButton(
                         onPressed: () {
                           setState(() {
-                            isCompleted = true; // 💡 ここで完了状態にする
+                            isCompleted = true;
                           });
                           _saveData();
                         },
@@ -898,7 +947,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   onChanged: (v) {
                     setState(() {
                       t.isDone = v ?? false;
-                      // 💡 完了後にチェックを外したら、未完了状態に戻す
                       if (!t.isDone) {
                         isCompleted = false;
                       }
@@ -943,7 +991,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   onPressed: () {
                     setState(() {
                       t.isSkipped = !t.isSkipped;
-                      // 💡 スキップを解除した時も未完了状態に戻す
                       if (!t.isSkipped && !t.isDone) {
                         isCompleted = false;
                       }
