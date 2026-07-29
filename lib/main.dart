@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'notification_service.dart';
+import 'package:http/http.dart' as http;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -122,17 +123,31 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   }
 
   // 💡 お知らせをチェックする関数（デモ用に文字をセット）
-  void _checkUpdates() {
-    String newAnnouncement = "【お知らせ】最新版 v1.0.2 が公開されました！Googleドライブから更新してください。";
+  Future<void> _checkUpdates() async {
+    // 💡 ステップ1でコピーした「Raw」のURLに差し替えてください
+    const String url =
+        "https://gist.githubusercontent.com/kkuramitu-portfolio/c53f5ffc88c1d686f8547021bf291309/raw/3edae42c6feb149996ca947a11ac8831bafc33ff/announcement.json";
 
-    if (mounted) {
-      setState(() {
-        if (newAnnouncement != _lastReadAnnouncement) {
-          _announcement = newAnnouncement;
-        } else {
-          _announcement = "";
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        // 文字化けを防ぐため utf8 でデコード
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        String newMessage = data['message'];
+
+        if (mounted) {
+          setState(() {
+            // 最後に閉じたメッセージと違う場合のみ表示
+            if (newMessage != _lastReadAnnouncement) {
+              _announcement = newMessage;
+            } else {
+              _announcement = "";
+            }
+          });
         }
-      });
+      }
+    } catch (e) {
+      debugPrint("お知らせの取得に失敗しました: $e");
     }
   }
 

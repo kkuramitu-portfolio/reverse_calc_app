@@ -30,6 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  http: ^1.2.2
 
   # アプリの実行に必要なパッケージ（1箇所にまとめます）
   cupertino_icons: ^1.0.8
