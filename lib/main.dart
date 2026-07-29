@@ -82,7 +82,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   bool isCompleted = false;
   String _announcement = "";
   String _lastReadAnnouncementId = "";
-  String _currentAnnouncementId = "" // 💡 お知らせ内容を保持する変数
+  String _currentAnnouncementId = ""; // 💡 お知らせ内容を保持する変数
   Timer? _timer;
 
   @override
@@ -139,7 +139,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         if (mounted) {
           setState(() {
             _currentAnnouncementId = newId; // 💡 取得したIDをキープ
-            
+
             // 保存されている既読IDと、今取得したIDが違う場合のみ表示
             if (newId != _lastReadAnnouncementId) {
               _announcement = newMessage;
@@ -611,15 +611,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     ),
                   ),
                   IconButton(
-                  icon: const Icon(Icons.close, size: 16),
-                  onPressed: () {
-                    setState(() {
-                      // 💡 今表示しているお知らせのIDを「既読」として記録する
-                      _lastReadAnnouncementId = _currentAnnouncementId; 
-                      _announcement = ""; // 画面から消す
-                    });
-                    _saveData(); // 💡 既読状態をスマホに保存
-                  },
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: () {
+                      setState(() {
+                        // 💡 今表示しているお知らせのIDを「既読」として記録する
+                        _lastReadAnnouncementId = _currentAnnouncementId;
+                        _announcement = ""; // 画面から消す
+                      });
+                      _saveData(); // 💡 既読状態をスマホに保存
+                    },
                   ),
                 ],
               ),
