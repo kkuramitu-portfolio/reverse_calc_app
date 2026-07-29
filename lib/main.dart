@@ -4,13 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:url_launcher/url_launcher.dart'; // 💡 URL起動用を復活
 import 'notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Webでなければ通知を初期化
   if (!kIsWeb) {
     await NotificationService().init();
   }
@@ -78,21 +77,20 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   Map<String, Map<String, dynamic>> templates = {};
   Map<String, int> quickMaster = {'Walking': 20, '風呂': 30, 'スッキリ': 10};
   int bufferMinutes = 0;
-
   bool isActive = false;
   bool isCompleted = false;
-
+  String _announcement = ""; // 💡 お知らせ内容を保持する変数
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _checkUpdates(); // 💡 起動時にお知らせをチェック
     _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) {
         final now = DateTime.now();
         final normalizedGoal = _getNormalizedGoal(now);
-        // 目標時刻から1時間経過したら自動リセット
         if (isActive &&
             now.isAfter(normalizedGoal.add(const Duration(hours: 1)))) {
           setState(() {
@@ -102,8 +100,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               t.isDone = false;
               t.isSkipped = false;
             }
+            _saveData();
           });
-          _saveData();
         } else {
           setState(() {});
         }
@@ -117,16 +115,12 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     super.dispose();
   }
 
-  // 💡 URLを開くヘルパー関数を復活
-  Future<void> _launchURL(String urlString) async {
-    final Uri url = Uri.parse(urlString);
-    if (!await launchUrl(url)) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('開けませんでした: $urlString')));
-      }
-    }
+  // 💡 お知らせをチェックする関数（デモ用に文字をセット）
+  void _checkUpdates() {
+    setState(() {
+      // 本来はここで外部JSONを読み込みますが、まずは手動でセットします
+      _announcement = "【お知らせ】最新版 v1.0.2 が公開されました！Googleドライブから更新してください。";
+    });
   }
 
   DateTime _getNormalizedGoal(DateTime now) {
@@ -143,6 +137,17 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       goal = goal.subtract(const Duration(days: 1));
     }
     return goal;
+  }
+
+  Future<void> _launchURL(String urlString) async {
+    final Uri url = Uri.parse(urlString);
+    if (!await launchUrl(url)) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('開けませんでした: $urlString')));
+      }
+    }
   }
 
   Future<void> _saveData() async {
@@ -173,14 +178,12 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         tasks = (decodedData['tasks'] as List)
             .map((item) => Task.fromJson(item))
             .toList();
-        if (decodedData['templates'] != null) {
+        if (decodedData['templates'] != null)
           templates = Map<String, Map<String, dynamic>>.from(
             decodedData['templates'],
           );
-        }
-        if (decodedData['quickMaster'] != null) {
+        if (decodedData['quickMaster'] != null)
           quickMaster = Map<String, int>.from(decodedData['quickMaster']);
-        }
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
         isActive = decodedData['isActive'] ?? false;
         isCompleted = decodedData['isCompleted'] ?? false;
@@ -213,8 +216,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   'tasks': tasks.map((t) => t.toJson()).toList(),
                   'bufferMinutes': bufferMinutes,
                 };
+                _saveData();
               });
-              _saveData();
               Navigator.pop(context);
             },
             child: const Text('保存'),
@@ -234,8 +237,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       bufferMinutes = data['bufferMinutes'] ?? 0;
       isActive = false;
       isCompleted = false;
+      _saveData();
     });
-    _saveData();
   }
 
   void _showManageTemplatesDialog() {
@@ -260,8 +263,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                           onPressed: () {
                             setState(() {
                               templates.remove(n);
+                              _saveData();
                             });
-                            _saveData();
                             setDialogState(() {});
                           },
                         ),
@@ -312,15 +315,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                           onPressed: () {
                             setState(() {
                               tasks.add(Task(name: e.key, duration: e.value));
+                              _saveData();
                             });
-                            _saveData();
                             Navigator.pop(context);
                           },
                           onDeleted: () {
                             setState(() {
                               quickMaster.remove(e.key);
+                              _saveData();
                             });
-                            _saveData();
                             setDialogState(() {});
                           },
                           deleteIconColor: Colors.grey,
@@ -334,8 +337,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                           if (name.isNotEmpty) {
                             setState(() {
                               quickMaster[name] = duration;
+                              _saveData();
                             });
-                            _saveData();
                             setDialogState(() {});
                           }
                         },
@@ -376,8 +379,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   } else {
                     tasks.add(Task(name: name, duration: duration));
                   }
+                  _saveData();
                 });
-                _saveData();
                 Navigator.pop(context);
               },
               child: Text(isEditing ? '更新' : '追加'),
@@ -445,7 +448,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 });
                 _saveData();
               } else if (v == 'feedback') {
-                // 💡 フィードバックのURL起動処理を復活
                 _launchURL(
                   'https://docs.google.com/forms/d/e/1FAIpQLSfwPKdGwoEvtr3VvRbvYGuMjd6Gb0_VHIs83OCQo_Cvltv5-A/viewform?usp=pp_url&entry.1476558753=%E4%BA%88%E5%AE%9A%E9%80%86%E7%AE%97%E3%82%A2%E3%83%97%E3%83%AA',
                 );
@@ -453,14 +455,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 _loadTemplate(v);
               }
             },
-            // 💡 メニューのUIをアイコン付きの元のリッチな形に復活
             itemBuilder: (c) => [
               const PopupMenuItem(
                 value: 'save_new',
                 child: Row(
                   children: [
-                    Icon(Icons.save, color: Colors.blue),
-                    Text(' 保存'),
+                    Icon(Icons.save, size: 18),
+                    SizedBox(width: 8),
+                    Text('保存'),
                   ],
                 ),
               ),
@@ -468,8 +470,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 value: 'manage',
                 child: Row(
                   children: [
-                    Icon(Icons.settings, color: Colors.grey),
-                    Text(' 管理'),
+                    Icon(Icons.settings, size: 18),
+                    SizedBox(width: 8),
+                    Text('管理'),
                   ],
                 ),
               ),
@@ -477,8 +480,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 value: 'reset',
                 child: Row(
                   children: [
-                    Icon(Icons.refresh, color: Colors.orange),
-                    Text(' 全リセット'),
+                    Icon(Icons.refresh, size: 18),
+                    SizedBox(width: 8),
+                    Text('全リセット'),
                   ],
                 ),
               ),
@@ -491,8 +495,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 value: 'feedback',
                 child: Row(
                   children: [
-                    Icon(Icons.feedback_outlined, color: Colors.blue),
-                    Text(' フィードバックを送る'),
+                    Icon(Icons.feedback_outlined, color: Colors.blue, size: 18),
+                    SizedBox(width: 8),
+                    Text('フィードバックを送る'),
                   ],
                 ),
               ),
@@ -506,6 +511,36 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       ),
       body: Column(
         children: [
+          // 💡 お知らせバナー（内容がある場合のみ表示）
+          if (_announcement.isNotEmpty)
+            Container(
+              width: double.infinity,
+              color: Colors.yellow[100],
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.info_outline,
+                    size: 18,
+                    color: Colors.orange,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _announcement,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: () => setState(() => _announcement = ""),
+                  ),
+                ],
+              ),
+            ),
           _buildDynamicBanner(
             allFinished,
             timeDeficit,
@@ -524,8 +559,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 setState(() {
                   final item = tasks.removeAt(oldI);
                   tasks.insert(newI, item);
+                  _saveData();
                 });
-                _saveData();
               },
               itemBuilder: (c, i) => _buildTaskTile(tasks[i], calcTimes[i], i),
             ),
@@ -563,7 +598,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               }
             });
             _saveData();
-
             if (!kIsWeb) {
               try {
                 await NotificationService().cancelAll();
@@ -578,7 +612,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   }
                 }
               } catch (e) {
-                debugPrint("Notification error: $e");
+                debugPrint(e.toString());
               }
             }
           },
@@ -591,7 +625,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         ),
       );
     }
-
     return Column(
       children: [
         if (deficit > 0 && !allFinished && !isCompleted)
@@ -617,7 +650,6 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         Builder(
           builder: (context) {
             final diff = goal.difference(now).inMinutes;
-
             if (isCompleted) {
               final color = diff > 0
                   ? Colors.teal
@@ -693,9 +725,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        allFinished
-                            ? "タスクがすべて完了した場合、出発時間まで $diff 分前です！"
-                            : '準備実行中...',
+                        allFinished ? "タスク完了！今なら出発まで $diff 分前です！" : '準備実行中...',
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -797,7 +827,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             child: ch!,
           ),
         );
-        if (t != null) {
+        if (t != null)
           setState(() {
             goalTime = DateTime(
               goalTime.year,
@@ -806,9 +836,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               t.hour,
               t.minute,
             );
+            _saveData();
           });
-          _saveData();
-        }
       },
     );
   }
@@ -843,12 +872,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         ),
                         selected: bufferMinutes == m,
                         onSelected: (s) {
-                          if (s) {
+                          if (s)
                             setState(() {
                               bufferMinutes = m;
+                              _saveData();
                             });
-                            _saveData();
-                          }
                         },
                       ),
                     )
@@ -862,12 +890,10 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             max: 15,
             divisions: 15,
             activeColor: Colors.orange,
-            onChanged: (v) {
-              setState(() {
-                bufferMinutes = v.toInt();
-              });
+            onChanged: (v) => setState(() {
+              bufferMinutes = v.toInt();
               _saveData();
-            },
+            }),
           ),
         ],
       ),
@@ -910,8 +936,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         final old = t;
         setState(() {
           tasks.removeAt(i);
+          _saveData();
         });
-        _saveData();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('${old.name} 削除'),
@@ -920,8 +946,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               onPressed: () {
                 setState(() {
                   tasks.insert(i, old);
+                  _saveData();
                 });
-                _saveData();
               },
             ),
           ),
@@ -947,11 +973,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   onChanged: (v) {
                     setState(() {
                       t.isDone = v ?? false;
-                      if (!t.isDone) {
-                        isCompleted = false;
-                      }
+                      if (!t.isDone) isCompleted = false;
+                      _saveData();
                     });
-                    _saveData();
                   },
                 ),
           title: Row(
@@ -988,15 +1012,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     size: 20,
                     color: t.isSkipped ? Colors.blue : Colors.orange,
                   ),
-                  onPressed: () {
-                    setState(() {
-                      t.isSkipped = !t.isSkipped;
-                      if (!t.isSkipped && !t.isDone) {
-                        isCompleted = false;
-                      }
-                    });
+                  onPressed: () => setState(() {
+                    t.isSkipped = !t.isSkipped;
+                    if (!t.isSkipped && !t.isDone) isCompleted = false;
                     _saveData();
-                  },
+                  }),
                 ),
               if (isCur && !t.isSkipped)
                 const Badge(label: Text('NOW'), backgroundColor: Colors.blue),
@@ -1068,8 +1088,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             onPressed: () {
               setState(() {
                 goalLabel = n;
+                _saveData();
               });
-              _saveData();
               Navigator.pop(context);
             },
             child: const Text('更新'),
