@@ -8,14 +8,13 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  // Webでのエラーを避けるため dynamic で保持
-  dynamic _plugin;
+  final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
 
   Future<void> init() async {
     if (kIsWeb) return;
 
     try {
-      _plugin = FlutterLocalNotificationsPlugin();
       tz.initializeTimeZones();
       tz.setLocalLocation(tz.getLocation('Asia/Tokyo'));
 
@@ -27,6 +26,11 @@ class NotificationService {
             requestAlertPermission: true,
             requestBadgePermission: true,
             requestSoundPermission: true,
+            // 💡 追加：アプリを開いている間も通知を表示する設定
+            notificationCategories: [],
+            defaultPresentAlert: true,
+            defaultPresentBadge: true,
+            defaultPresentSound: true,
           );
 
       const InitializationSettings initializationSettings =
@@ -35,31 +39,37 @@ class NotificationService {
             iOS: initializationSettingsDarwin,
           );
 
-      await _plugin.initialize(initializationSettings);
+      await _plugin.initialize(
+        initializationSettings,
+        // 💡 追加：通知をタップした時の処理（空でも定義しておくと安定します）
+        onDidReceiveNotificationResponse: (details) {
+          debugPrint("通知がタップされました: ${details.payload}");
+        },
+      );
+
+      // 💡 iOSの権限を改めて要求
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+
+      debugPrint("通知サービスが初期化されました（Asia/Tokyo）");
     } catch (e) {
       debugPrint("Notification init error: $e");
     }
   }
 
-  // 全ての通知をキャンセル
   Future<void> cancelAll() async {
-    if (kIsWeb || _plugin == null) return;
-    try {
-      await _plugin.cancelAll();
-    } catch (e) {
-      debugPrint("Cancel error: $e");
-    }
+    if (kIsWeb) return;
+    await _plugin.cancelAll();
+    debugPrint("全ての通知予約をクリアしました");
   }
 
-  // 💡 ここが重要！特定のIDの通知だけをキャンセルする本物の処理
   Future<void> cancelNotification(int id) async {
-    if (kIsWeb || _plugin == null) return;
-    try {
-      await _plugin.cancel(id); // プラグインに対して「このIDを消して」と命令
-      debugPrint("通知 ID: $id をキャンセルしました");
-    } catch (e) {
-      debugPrint("Cancel single error: $e");
-    }
+    if (kIsWeb) return;
+    await _plugin.cancel(id);
+    debugPrint("通知 ID: $id をキャンセルしました");
   }
 
   Future<void> scheduleNotification({
@@ -68,14 +78,23 @@ class NotificationService {
     required String body,
     required DateTime scheduledDate,
   }) async {
-    if (kIsWeb || _plugin == null) return;
+    if (kIsWeb) return;
 
     try {
+      // 💡 予約時間をタイムゾーン付きに変換
+      final tzDate = tz.TZDateTime.from(scheduledDate, tz.local);
+
+      // 💡 過去の時間は予約できないためチェック
+      if (tzDate.isBefore(tz.TZDateTime.now(tz.local))) {
+        debugPrint("警告: 過去の時刻（$tzDate）のため予約をスキップしました");
+        return;
+      }
+
       await _plugin.zonedSchedule(
         id,
         title,
         body,
-        tz.TZDateTime.from(scheduledDate, tz.local),
+        tzDate,
         const NotificationDetails(
           android: AndroidNotificationDetails(
             'reverse_calc_channel',
@@ -83,12 +102,17 @@ class NotificationService {
             importance: Importance.max,
             priority: Priority.high,
           ),
-          iOS: DarwinNotificationDetails(),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true, // 💡 フォアグラウンドでも表示
+            presentBadge: true,
+            presentSound: true,
+          ),
         ),
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       );
+      debugPrint("通知予約完了: ID=$id, 時刻=$tzDate, 内容=$body");
     } catch (e) {
       debugPrint("Schedule error: $e");
     }
