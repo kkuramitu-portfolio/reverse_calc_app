@@ -86,8 +86,13 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   @override
   void initState() {
     super.initState();
-    _loadData();
-    _checkUpdates(); // 💡 起動時にお知らせをチェック
+
+    // 💡 読み込みが終わってから判定する、この1セットだけでOKです
+    _loadData().then((_) {
+      _checkUpdates();
+    });
+
+    // 1分ごとのタイマー
     _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) {
         final now = DateTime.now();
@@ -120,14 +125,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   void _checkUpdates() {
     String newAnnouncement = "【お知らせ】最新版 v1.0.2 が公開されました！Googleドライブから更新してください。";
 
-    setState(() {
-      // 💡 取得したお知らせが、最後に閉じたものと違う場合のみ表示する
-      if (newAnnouncement != _lastReadAnnouncement) {
-        _announcement = newAnnouncement;
-      } else {
-        _announcement = "";
-      }
-    });
+    if (mounted) {
+      setState(() {
+        if (newAnnouncement != _lastReadAnnouncement) {
+          _announcement = newAnnouncement;
+        } else {
+          _announcement = "";
+        }
+      });
+    }
   }
 
   DateTime _getNormalizedGoal(DateTime now) {
@@ -187,16 +193,22 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         tasks = (decodedData['tasks'] as List)
             .map((item) => Task.fromJson(item))
             .toList();
-        if (decodedData['templates'] != null)
+
+        // 💡 波線が出ていた部分を { } で囲みました
+        if (decodedData['templates'] != null) {
           templates = Map<String, Map<String, dynamic>>.from(
             decodedData['templates'],
           );
-        if (decodedData['quickMaster'] != null)
+        }
+
+        if (decodedData['quickMaster'] != null) {
           quickMaster = Map<String, int>.from(decodedData['quickMaster']);
+        }
+
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
         isActive = decodedData['isActive'] ?? false;
         isCompleted = decodedData['isCompleted'] ?? false;
-        _lastReadAnnouncement = prefs.getString('last_read_announcement') ?? "";
+        _lastReadAnnouncement = decodedData['last_read_announcement'] ?? "";
       });
     }
   }
@@ -501,6 +513,20 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 (n) => PopupMenuItem(value: n, child: Text(n)),
               ),
               const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'show_announcement',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: Colors.orange[700],
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text('最新のお知らせ'),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: 'feedback',
                 child: Row(
