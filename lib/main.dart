@@ -559,7 +559,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   children: [
                     Icon(Icons.feedback_outlined, color: Colors.blue, size: 18),
                     SizedBox(width: 8),
-                    const Text('フィードバックを送る'),
+                    Text('フィードバックを送る'),
                   ],
                 ),
               ),
