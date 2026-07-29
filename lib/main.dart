@@ -250,8 +250,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   }
 
   void _loadTemplate(String name) {
+    // 💡 安全策：もし templates にその名前がなければ何もしない
+    if (!templates.containsKey(name)) return;
+
     setState(() {
-      final data = templates[name]!;
+      final data = templates[name]!; // ここでは containsKey で確認済みなので安全
       goalLabel = data['goalLabel'] ?? name;
       tasks = (data['tasks'] as List)
           .map((item) => Task.fromJson(item))
@@ -259,8 +262,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       bufferMinutes = data['bufferMinutes'] ?? 0;
       isActive = false;
       isCompleted = false;
-      _saveData();
     });
+    _saveData();
   }
 
   void _showManageTemplatesDialog() {
@@ -469,11 +472,29 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   isCompleted = false;
                 });
                 _saveData();
+              } else if (v == 'show_announcement') {
+                // 💡 ここでダイアログを表示
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('最新のお知らせ'),
+                    content: const Text(
+                      "【お知らせ】最新版 v1.0.2 が公開されました！Googleドライブから更新してください。",
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('閉じる'),
+                      ),
+                    ],
+                  ),
+                );
               } else if (v == 'feedback') {
                 _launchURL(
                   'https://docs.google.com/forms/d/e/1FAIpQLSfwPKdGwoEvtr3VvRbvYGuMjd6Gb0_VHIs83OCQo_Cvltv5-A/viewform?usp=pp_url&entry.1476558753=%E4%BA%88%E5%AE%9A%E9%80%86%E7%AE%97%E3%82%A2%E3%83%97%E3%83%AA',
                 );
               } else {
+                // 💡 上記のどれにも当てはまらない場合（保存したテンプレート名の場合）のみ実行
                 _loadTemplate(v);
               }
             },
@@ -869,7 +890,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             child: ch!,
           ),
         );
-        if (t != null)
+
+        // 💡 if文を { } で囲みます
+        if (t != null) {
           setState(() {
             goalTime = DateTime(
               goalTime.year,
@@ -880,6 +903,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             );
             _saveData();
           });
+        }
       },
     );
   }
@@ -914,11 +938,13 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         ),
                         selected: bufferMinutes == m,
                         onSelected: (s) {
-                          if (s)
+                          // 💡 if文を { } で囲みます
+                          if (s) {
                             setState(() {
                               bufferMinutes = m;
                               _saveData();
                             });
+                          }
                         },
                       ),
                     )
