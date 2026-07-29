@@ -126,7 +126,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   Future<void> _checkUpdates() async {
     // 💡 ステップ1でコピーした「Raw」のURLに差し替えてください
     const String url =
-        "https://gist.githubusercontent.com/kkuramitu-portfolio/c53f5ffc88c1d686f8547021bf291309/raw/3edae42c6feb149996ca947a11ac8831bafc33ff/announcement.json";
+        "https://gist.githubusercontent.com/kkuramitu-portfolio/c53f5ffc88c1d686f8547021bf291309/raw/announcement.json";
 
     try {
       final response = await http.get(Uri.parse(url));
