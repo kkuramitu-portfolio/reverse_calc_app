@@ -81,7 +81,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   bool isActive = false;
   bool isCompleted = false;
   String _announcement = "";
-  String _lastReadAnnouncement = ""; // 💡 お知らせ内容を保持する変数
+  String _lastReadAnnouncementId = "";
+  String _currentAnnouncementId = "" // 💡 お知らせ内容を保持する変数
   Timer? _timer;
 
   @override
@@ -124,21 +125,23 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
   // 💡 お知らせをチェックする関数（デモ用に文字をセット）
   Future<void> _checkUpdates() async {
-    // 💡 ステップ1でコピーした「Raw」のURLに差し替えてください
-    const String url =
-        "https://gist.githubusercontent.com/kkuramitu-portfolio/d1eaedbafb6d60a391ad3a774501116f/raw/gistfile1.txt";
+    // 💡 URLの末尾に ?t=タイムスタンプ を付けることで、常に最新を読み込ませます（キャッシュ回避）
+    final String url =
+        "https://gist.githubusercontent.com/kkuramitu-portfolio/d1eaedbafb6d60a391ad3a774501116f/raw/gistfile1.txt?t=${DateTime.now().millisecondsSinceEpoch}";
 
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
-        // 文字化けを防ぐため utf8 でデコード
         final data = json.decode(utf8.decode(response.bodyBytes));
         String newMessage = data['message'];
+        String newId = data['id']; // 💡 JSONからIDを取得
 
         if (mounted) {
           setState(() {
-            // 最後に閉じたメッセージと違う場合のみ表示
-            if (newMessage != _lastReadAnnouncement) {
+            _currentAnnouncementId = newId; // 💡 取得したIDをキープ
+            
+            // 保存されている既読IDと、今取得したIDが違う場合のみ表示
+            if (newId != _lastReadAnnouncementId) {
               _announcement = newMessage;
             } else {
               _announcement = "";
@@ -180,7 +183,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
 
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('last_read_announcement', _lastReadAnnouncement);
+    await prefs.setString('last_read_announcement_id', _lastReadAnnouncementId);
     await prefs.setString(
       'app_data',
       json.encode({
@@ -192,7 +195,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         'bufferMinutes': bufferMinutes,
         'isActive': isActive,
         'isCompleted': isCompleted,
-        'last_read_announcement': _lastReadAnnouncement,
+        'last_read_announcement_id': _lastReadAnnouncementId,
       }),
     );
   }
@@ -223,7 +226,8 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
         isActive = decodedData['isActive'] ?? false;
         isCompleted = decodedData['isCompleted'] ?? false;
-        _lastReadAnnouncement = decodedData['last_read_announcement'] ?? "";
+        _lastReadAnnouncementId =
+            decodedData['last_read_announcement_id'] ?? "";
       });
     }
   }
@@ -607,14 +611,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 16),
-                    onPressed: () {
-                      setState(() {
-                        _lastReadAnnouncement = _announcement; // 💡 今の内容を既読にする
-                        _announcement = ""; // 画面から消す
-                      });
-                      _saveData(); // 💡 既読状態を保存
-                    },
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: () {
+                    setState(() {
+                      // 💡 今表示しているお知らせのIDを「既読」として記録する
+                      _lastReadAnnouncementId = _currentAnnouncementId; 
+                      _announcement = ""; // 画面から消す
+                    });
+                    _saveData(); // 💡 既読状態をスマホに保存
+                  },
                   ),
                 ],
               ),
