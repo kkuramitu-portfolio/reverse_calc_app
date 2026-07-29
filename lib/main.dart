@@ -4,20 +4,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'dart:async';
-import 'package:url_launcher/url_launcher.dart'; // URL起動用
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'notification_service.dart';
 
-Future<void> main() async {
-  // Flutterの初期化を確実にする
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 通知サービスの初期化
-  await NotificationService().init();
-
+  // Webでなければ通知を初期化
+  if (!kIsWeb) {
+    await NotificationService().init();
+  }
   runApp(const ReverseCalcApp());
 }
 
-// --- データモデル ---
 class Task {
   String name;
   int duration;
@@ -37,7 +35,6 @@ class Task {
     'isDone': isDone,
     'isSkipped': isSkipped,
   };
-
   factory Task.fromJson(Map<String, dynamic> json) => Task(
     name: json['name'],
     duration: json['duration'],
@@ -48,7 +45,6 @@ class Task {
 
 class ReverseCalcApp extends StatelessWidget {
   const ReverseCalcApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -64,16 +60,12 @@ class ReverseCalcApp extends StatelessWidget {
 
 class ReverseCalcScreen extends StatelessWidget {
   const ReverseCalcScreen({super.key});
-
   @override
-  Widget build(BuildContext context) {
-    return const ReverseCalcContent();
-  }
+  Widget build(BuildContext context) => const ReverseCalcContent();
 }
 
 class ReverseCalcContent extends StatefulWidget {
   const ReverseCalcContent({super.key});
-
   @override
   State<ReverseCalcContent> createState() => _ReverseCalcContentState();
 }
@@ -85,7 +77,10 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   Map<String, Map<String, dynamic>> templates = {};
   Map<String, int> quickMaster = {'Walking': 20, '風呂': 30, 'スッキリ': 10};
   int bufferMinutes = 0;
+
   bool isActive = false;
+  bool isCompleted = false; // 💡 新しく「完了状態」を追加
+
   Timer? _timer;
 
   @override
@@ -95,23 +90,19 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) {
         final now = DateTime.now();
-        final normalizedGoal = DateTime(
-          now.year,
-          now.month,
-          now.day,
-          goalTime.hour,
-          goalTime.minute,
-        );
-
+        final normalizedGoal = _getNormalizedGoal(now);
+        // 目標時刻から1時間経過したら自動リセット
         if (isActive &&
             now.isAfter(normalizedGoal.add(const Duration(hours: 1)))) {
           setState(() {
             isActive = false;
+            isCompleted = false;
             for (var t in tasks) {
               t.isDone = false;
+              t.isSkipped = false;
             }
-            _saveData();
           });
+          _saveData();
         } else {
           setState(() {});
         }
@@ -125,30 +116,37 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     super.dispose();
   }
 
-  // URLを開くヘルパー関数
-  Future<void> _launchURL(String urlString) async {
-    final Uri url = Uri.parse(urlString);
-    if (!await launchUrl(url)) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('開けませんでした: $urlString')));
-      }
+  DateTime _getNormalizedGoal(DateTime now) {
+    DateTime goal = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      goalTime.hour,
+      goalTime.minute,
+    );
+    if (now.difference(goal).inHours >= 6) {
+      goal = goal.add(const Duration(days: 1));
+    } else if (goal.difference(now).inHours >= 18) {
+      goal = goal.subtract(const Duration(days: 1));
     }
+    return goal;
   }
 
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    final String encodedData = json.encode({
-      'goalTime': goalTime.toIso8601String(),
-      'goalLabel': goalLabel,
-      'tasks': tasks.map((t) => t.toJson()).toList(),
-      'templates': templates,
-      'quickMaster': quickMaster,
-      'bufferMinutes': bufferMinutes,
-      'isActive': isActive,
-    });
-    await prefs.setString('app_data', encodedData);
+    await prefs.setString(
+      'app_data',
+      json.encode({
+        'goalTime': goalTime.toIso8601String(),
+        'goalLabel': goalLabel,
+        'tasks': tasks.map((t) => t.toJson()).toList(),
+        'templates': templates,
+        'quickMaster': quickMaster,
+        'bufferMinutes': bufferMinutes,
+        'isActive': isActive,
+        'isCompleted': isCompleted, // 💡 保存データに追加
+      }),
+    );
   }
 
   Future<void> _loadData() async {
@@ -172,19 +170,20 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         }
         bufferMinutes = decodedData['bufferMinutes'] ?? 0;
         isActive = decodedData['isActive'] ?? false;
+        isCompleted = decodedData['isCompleted'] ?? false; // 💡 読み込みデータに追加
       });
     }
   }
 
   void _saveCurrentAsTemplate() {
-    String templateName = '';
+    String name = '';
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('テンプレートとして保存'),
+        title: const Text('テンプレート保存'),
         content: TextField(
-          decoration: const InputDecoration(labelText: 'テンプレート名（例：平日の朝）'),
-          onChanged: (value) => templateName = value,
+          onChanged: (v) => name = v,
+          decoration: const InputDecoration(labelText: '名前'),
         ),
         actions: [
           TextButton(
@@ -193,18 +192,16 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           ),
           ElevatedButton(
             onPressed: () {
-              if (templateName.isEmpty) {
-                return;
-              }
+              if (name.isEmpty) return;
               setState(() {
-                goalLabel = templateName;
-                templates[templateName] = {
-                  'goalLabel': goalLabel,
+                goalLabel = name;
+                templates[name] = {
+                  'goalLabel': name,
                   'tasks': tasks.map((t) => t.toJson()).toList(),
                   'bufferMinutes': bufferMinutes,
                 };
-                _saveData();
               });
+              _saveData();
               Navigator.pop(context);
             },
             child: const Text('保存'),
@@ -223,15 +220,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           .toList();
       bufferMinutes = data['bufferMinutes'] ?? 0;
       isActive = false;
-      _saveData();
+      isCompleted = false;
     });
-  }
-
-  void _deleteTemplate(String name) {
-    setState(() {
-      templates.remove(name);
-      _saveData();
-    });
+    _saveData();
   }
 
   void _showManageTemplatesDialog() {
@@ -239,27 +230,30 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('テンプレートの管理'),
+          title: const Text('管理'),
           content: SizedBox(
             width: double.maxFinite,
             child: templates.isEmpty
-                ? const Text('保存されたテンプレートはありません')
+                ? const Text('なし')
                 : ListView.builder(
                     shrinkWrap: true,
                     itemCount: templates.keys.length,
-                    itemBuilder: (context, index) {
-                      String name = templates.keys.elementAt(index);
+                    itemBuilder: (context, i) {
+                      String n = templates.keys.elementAt(i);
                       return ListTile(
-                        title: Text(name),
+                        title: Text(n),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete, color: Colors.red),
                           onPressed: () {
-                            _deleteTemplate(name);
+                            setState(() {
+                              templates.remove(n);
+                            });
+                            _saveData();
                             setDialogState(() {});
                           },
                         ),
                         onTap: () {
-                          _loadTemplate(name);
+                          _loadTemplate(n);
                           Navigator.pop(context);
                         },
                       );
@@ -278,16 +272,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   }
 
   void _showTaskDialog({Task? task, int? index}) {
-    String newName = task?.name ?? '';
-    int newDuration = task?.duration ?? 15;
+    String name = task?.name ?? '';
+    int duration = task?.duration ?? 15;
     final isEditing = task != null;
-    final nameController = TextEditingController(text: newName);
-
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text(isEditing ? '予定を編集' : '新しい予定を追加'),
+          title: Text(isEditing ? '編集' : '追加'),
           content: SizedBox(
             width: 300,
             child: SingleChildScrollView(
@@ -295,30 +287,27 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    'クイック追加（×で削除）',
+                    'クイック追加',
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
-                  const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
                     children: [
                       ...quickMaster.entries.map(
-                        (entry) => InputChip(
-                          label: Text(entry.key),
+                        (e) => InputChip(
+                          label: Text(e.key),
                           onPressed: () {
                             setState(() {
-                              tasks.add(
-                                Task(name: entry.key, duration: entry.value),
-                              );
-                              _saveData();
+                              tasks.add(Task(name: e.key, duration: e.value));
                             });
+                            _saveData();
                             Navigator.pop(context);
                           },
                           onDeleted: () {
                             setState(() {
-                              quickMaster.remove(entry.key);
-                              _saveData();
+                              quickMaster.remove(e.key);
                             });
+                            _saveData();
                             setDialogState(() {});
                           },
                           deleteIconColor: Colors.grey,
@@ -329,11 +318,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                         avatar: const Icon(Icons.add, size: 16),
                         label: const Text('登録'),
                         onPressed: () {
-                          if (newName.isNotEmpty) {
+                          if (name.isNotEmpty) {
                             setState(() {
-                              quickMaster[newName] = newDuration;
-                              _saveData();
+                              quickMaster[name] = duration;
                             });
+                            _saveData();
                             setDialogState(() {});
                           }
                         },
@@ -342,24 +331,18 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                   ),
                   const Divider(height: 32),
                   TextField(
-                    controller: nameController,
+                    controller: TextEditingController(text: name),
                     decoration: const InputDecoration(labelText: '予定名'),
-                    onChanged: (value) => newName = value,
+                    onChanged: (v) => name = v,
                   ),
                   const SizedBox(height: 20),
-                  const Text(
-                    '所要時間',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
                   SizedBox(
                     height: 150,
                     child: CupertinoTimerPicker(
                       mode: CupertinoTimerPickerMode.hm,
                       minuteInterval: 5,
-                      initialTimerDuration: Duration(minutes: newDuration),
-                      onTimerDurationChanged: (Duration duration) {
-                        newDuration = duration.inMinutes;
-                      },
+                      initialTimerDuration: Duration(minutes: duration),
+                      onTimerDurationChanged: (d) => duration = d.inMinutes,
                     ),
                   ),
                 ],
@@ -373,17 +356,15 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             ),
             ElevatedButton(
               onPressed: () {
-                if (newName.isEmpty) {
-                  return;
-                }
+                if (name.isEmpty) return;
                 setState(() {
                   if (isEditing) {
-                    tasks[index!] = Task(name: newName, duration: newDuration);
+                    tasks[index!] = Task(name: name, duration: duration);
                   } else {
-                    tasks.add(Task(name: newName, duration: newDuration));
+                    tasks.add(Task(name: name, duration: duration));
                   }
-                  _saveData();
                 });
+                _saveData();
                 Navigator.pop(context);
               },
               child: Text(isEditing ? '更新' : '追加'),
@@ -397,53 +378,23 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-
-    // 1. まずは「今日」の目標時刻を作る
-    DateTime normalizedGoal = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      goalTime.hour,
-      goalTime.minute,
-    );
-
-    // 2. 【修正ポイント】日付の切り替え判定を賢くする
-    // 目標時刻から「6時間以上」過ぎている場合のみ、翌日の予定とみなす
-    // （例：17:00が目標で現在17:09なら、差は9分なので「今日」のまま）
-    // （例：17:00が目標で現在23:30なら、6時間半過ぎているので「明日」とみなす）
-    if (now.difference(normalizedGoal).inHours >= 6) {
-      normalizedGoal = normalizedGoal.add(const Duration(days: 1));
-    }
-    // 逆に、目標が「今」より18時間以上先なら、それは「昨日」の目標の残りカスかもしれないので調整
-    else if (normalizedGoal.difference(now).inHours >= 18) {
-      normalizedGoal = normalizedGoal.subtract(const Duration(days: 1));
-    }
-
-    int remainingRequiredMinutes = tasks
+    final normalizedGoal = _getNormalizedGoal(now);
+    int tasksDur = tasks
         .where((t) => !t.isDone && !t.isSkipped)
         .fold(0, (sum, t) => sum + t.duration);
-    int activeTasksCount = tasks.where((t) => !t.isDone && !t.isSkipped).length;
-    int remainingBuffer = activeTasksCount > 1
-        ? (activeTasksCount - 1) * bufferMinutes
-        : 0;
-    int totalNeededMinutes = remainingRequiredMinutes + remainingBuffer;
-    int minutesUntilGoal = normalizedGoal.difference(now).inMinutes;
-    int timeDeficit = totalNeededMinutes - minutesUntilGoal;
+    int activeCount = tasks.where((t) => !t.isDone && !t.isSkipped).length;
+    int totalNeeded =
+        tasksDur + (activeCount > 1 ? (activeCount - 1) * bufferMinutes : 0);
+    int timeDeficit = totalNeeded - normalizedGoal.difference(now).inMinutes;
 
-    int tasksDuration = tasks.fold(0, (sum, item) => sum + item.duration);
-    int totalBuffer = tasks.length > 1 ? (tasks.length - 1) * bufferMinutes : 0;
-    int totalDuration = tasksDuration + totalBuffer;
-    DateTime startTime = normalizedGoal.subtract(
-      Duration(minutes: totalDuration),
-    );
-
-    List<DateTime> calculatedTimes = [];
-    DateTime nextStartTime = startTime;
-    for (int i = 0; i < tasks.length; i++) {
-      calculatedTimes.add(nextStartTime);
-      nextStartTime = nextStartTime.add(
-        Duration(minutes: tasks[i].duration + bufferMinutes),
-      );
+    int totalDur =
+        tasks.fold(0, (sum, t) => sum + t.duration) +
+        (tasks.length > 1 ? (tasks.length - 1) * bufferMinutes : 0);
+    DateTime nextStart = normalizedGoal.subtract(Duration(minutes: totalDur));
+    List<DateTime> calcTimes = [];
+    for (var t in tasks) {
+      calcTimes.add(nextStart);
+      nextStart = nextStart.add(Duration(minutes: t.duration + bufferMinutes));
     }
 
     final bool allFinished =
@@ -457,10 +408,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             const Text('予定逆算アプリ', style: TextStyle(fontSize: 16)),
             Text(
               '現在時刻: ${DateFormat('HH:mm').format(now)}',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.normal,
-              ),
+              style: const TextStyle(fontSize: 12),
             ),
           ],
         ),
@@ -468,243 +416,50 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.folder_special),
-            onSelected: (value) {
-              if (value == 'save_new') {
+            onSelected: (v) {
+              if (v == 'save_new') {
                 _saveCurrentAsTemplate();
-              } else if (value == 'manage') {
+              } else if (v == 'manage') {
                 _showManageTemplatesDialog();
-              } else if (value == 'reset') {
+              } else if (v == 'reset') {
                 setState(() {
                   for (var t in tasks) {
                     t.isDone = false;
                     t.isSkipped = false;
                   }
-                  _saveData();
+                  isActive = false;
+                  isCompleted = false;
                 });
-              } else if (value == 'feedback') {
-                _launchURL(
-                  'https://docs.google.com/forms/d/e/1FAIpQLSfwPKdGwoEvtr3VvRbvYGuMjd6Gb0_VHIs83OCQo_Cvltv5-A/viewform?usp=pp_url&entry.1476558753=%E4%BA%88%E5%AE%9A%E9%80%86%E7%AE%97%E3%82%A2%E3%83%97%E3%83%AA',
-                );
+                _saveData();
               } else {
-                _loadTemplate(value);
+                _loadTemplate(v);
               }
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'save_new',
-                child: Row(
-                  children: [
-                    Icon(Icons.save, color: Colors.blue),
-                    Text(' 保存'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'manage',
-                child: Row(
-                  children: [
-                    Icon(Icons.settings, color: Colors.grey),
-                    Text(' 管理'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'reset',
-                child: Row(
-                  children: [
-                    Icon(Icons.refresh, color: Colors.orange),
-                    Text(' 全リセット'),
-                  ],
-                ),
-              ),
+            itemBuilder: (c) => [
+              const PopupMenuItem(value: 'save_new', child: Text('保存')),
+              const PopupMenuItem(value: 'manage', child: Text('管理')),
+              const PopupMenuItem(value: 'reset', child: Text('全リセット')),
               const PopupMenuDivider(),
               ...templates.keys.map(
-                (name) => PopupMenuItem(value: name, child: Text(name)),
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem(
-                value: 'feedback',
-                child: Row(
-                  children: [
-                    Icon(Icons.feedback_outlined, color: Colors.blue),
-                    Text(' フィードバックを送る'),
-                  ],
-                ),
+                (n) => PopupMenuItem(value: n, child: Text(n)),
               ),
             ],
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Center(child: Chip(label: Text('合計: $totalDuration分'))),
+            child: Center(child: Chip(label: Text('合計: $totalDur分'))),
           ),
         ],
       ),
       body: Column(
         children: [
-          if (!isActive)
-            Container(
-              width: double.infinity,
-              color: Colors.indigo.withValues(alpha: 0.8),
-              child: TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    isActive = true;
-                    for (var t in tasks) {
-                      t.isDone = false;
-                      t.isSkipped = false;
-                    }
-                    _saveData();
-                  });
-                },
-                icon: const Icon(Icons.play_arrow, color: Colors.white),
-                label: const Text(
-                  '準備を開始する',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            )
-          else
-            Builder(
-              builder: (context) {
-                final diff = normalizedGoal.difference(now).inMinutes;
-                final bool isEarly = diff > 0;
-
-                if (allFinished) {
-                  return Container(
-                    width: double.infinity,
-                    color: isEarly ? Colors.teal : Colors.green,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 4,
-                      horizontal: 16,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          isEarly ? Icons.timer_outlined : Icons.celebration,
-                          color: Colors.white,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: RichText(
-                            text: TextSpan(
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                              ),
-                              children: [
-                                if (isEarly) ...[
-                                  const TextSpan(text: '予定時刻の '),
-                                  TextSpan(
-                                    text: '$diff 分前',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 18,
-                                    ),
-                                  ),
-                                  const TextSpan(text: ' に準備完了！'),
-                                ] else ...[
-                                  const TextSpan(
-                                    text: '準備完了！いってらっしゃい！',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              isActive = false;
-                              for (var t in tasks) {
-                                t.isDone = false;
-                              }
-                              _saveData();
-                            });
-                          },
-                          child: const Text(
-                            '終了',
-                            style: TextStyle(
-                              color: Colors.white,
-                              decoration: TextDecoration.underline,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                return Column(
-                  children: [
-                    if (isActive && timeDeficit > 0 && !allFinished)
-                      Container(
-                        width: double.infinity,
-                        color: Colors.redAccent,
-                        padding: const EdgeInsets.all(8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.warning_amber_rounded,
-                              color: Colors.white,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '時間が $timeDeficit 分足りません！予定をスキップしてください',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    Container(
-                      width: double.infinity,
-                      color: Colors.indigo.withValues(alpha: 0.9),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.directions_run,
-                            color: Colors.white,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          const Text(
-                            '準備実行中...',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Spacer(),
-                          TextButton(
-                            onPressed: () => setState(() {
-                              isActive = false;
-                              _saveData();
-                            }),
-                            child: const Text(
-                              '中止',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+          _buildDynamicBanner(
+            allFinished,
+            timeDeficit,
+            normalizedGoal,
+            now,
+            calcTimes,
+          ),
           _buildGoalTimeTile(normalizedGoal),
           _buildBufferPanel(),
           const Divider(height: 1),
@@ -712,20 +467,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             child: ReorderableListView.builder(
               buildDefaultDragHandles: false,
               itemCount: tasks.length,
-              onReorderItem: (oldIndex, newIndex) {
+              onReorderItem: (oldI, newI) {
                 setState(() {
-                  final item = tasks.removeAt(oldIndex);
-                  tasks.insert(newIndex, item);
-                  _saveData();
+                  final item = tasks.removeAt(oldI);
+                  tasks.insert(newI, item);
                 });
+                _saveData();
               },
-              itemBuilder: (context, index) {
-                return _buildTaskTile(
-                  tasks[index],
-                  calculatedTimes[index],
-                  index,
-                );
-              },
+              itemBuilder: (c, i) => _buildTaskTile(tasks[i], calcTimes[i], i),
             ),
           ),
         ],
@@ -738,7 +487,222 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
     );
   }
 
-  Widget _buildGoalTimeTile(DateTime normalizedGoal) {
+  Widget _buildDynamicBanner(
+    bool allFinished,
+    int deficit,
+    DateTime goal,
+    DateTime now,
+    List<DateTime> times,
+  ) {
+    if (!isActive) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(8),
+        color: Colors.indigo.withValues(alpha: 0.8),
+        child: ElevatedButton.icon(
+          onPressed: () async {
+            setState(() {
+              isActive = true;
+              isCompleted = false; // 💡 開始時は未完了状態
+              for (var t in tasks) {
+                t.isDone = false;
+                t.isSkipped = false;
+              }
+            });
+            _saveData();
+
+            if (!kIsWeb) {
+              try {
+                await NotificationService().cancelAll();
+                for (int i = 0; i < tasks.length; i++) {
+                  if (times[i].isAfter(DateTime.now())) {
+                    await NotificationService().scheduleNotification(
+                      id: i,
+                      title: 'タスク開始',
+                      body: '次は「${tasks[i].name}」',
+                      scheduledDate: times[i],
+                    );
+                  }
+                }
+              } catch (e) {
+                debugPrint("Notification error: $e");
+              }
+            }
+          },
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('準備を開始する'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.indigo,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        // 💡 完了後は時間不足警告を出さない
+        if (deficit > 0 && !allFinished && !isCompleted)
+          Container(
+            width: double.infinity,
+            color: Colors.redAccent,
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.warning, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(
+                  '時間が $deficit 分足りません！',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Builder(
+          builder: (context) {
+            final diff = goal.difference(now).inMinutes;
+
+            // 💡 ユーザーが「完了」ボタンを押した後の状態
+            if (isCompleted) {
+              final color = diff > 0
+                  ? Colors.teal
+                  : (diff == 0 ? Colors.orange : Colors.red);
+              return Container(
+                width: double.infinity,
+                color: color,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      diff < 0 ? Icons.warning : Icons.celebration,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        diff > 0
+                            ? "準備完了！出発時間 $diff 分前です。"
+                            : (diff == 0
+                                  ? "出発時間になりました！"
+                                  : "出発時間から ${diff.abs()} 分過ぎています"),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    ElevatedButton(
+                      onPressed: () async {
+                        setState(() {
+                          isActive = false;
+                          isCompleted = false;
+                        });
+                        _saveData();
+                        if (!kIsWeb) {
+                          try {
+                            await NotificationService().cancelAll();
+                          } catch (e) {
+                            debugPrint(e.toString());
+                          }
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: color,
+                      ),
+                      child: const Text('終了'),
+                    ),
+                  ],
+                ),
+              );
+            }
+            // 💡 準備中（未完了）の状態
+            else {
+              final color = Colors.indigo.withValues(alpha: 0.9);
+              return Container(
+                width: double.infinity,
+                color: color,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      allFinished ? Icons.help_outline : Icons.directions_run,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        allFinished
+                            ? "タスクがすべて完了した場合、出発時間まで $diff 分前です！"
+                            : '準備実行中...',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    if (allFinished) ...[
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() {
+                            isCompleted = true; // 💡 ここで完了状態にする
+                          });
+                          _saveData();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.indigo,
+                        ),
+                        child: const Text('完了'),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    ElevatedButton(
+                      onPressed: () async {
+                        setState(() {
+                          isActive = false;
+                          isCompleted = false;
+                        });
+                        _saveData();
+                        if (!kIsWeb) {
+                          try {
+                            await NotificationService().cancelAll();
+                          } catch (e) {
+                            debugPrint(e.toString());
+                          }
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        side: const BorderSide(color: Colors.white),
+                      ),
+                      child: const Text('中止'),
+                    ),
+                  ],
+                ),
+              );
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGoalTimeTile(DateTime goal) {
     return ListTile(
       tileColor: Colors.indigo.withValues(alpha: 0.05),
       title: const Text(
@@ -750,7 +714,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         textBaseline: TextBaseline.alphabetic,
         children: [
           Text(
-            DateFormat('HH:mm').format(normalizedGoal),
+            DateFormat('HH:mm').format(goal),
             style: const TextStyle(
               fontSize: 36,
               fontWeight: FontWeight.bold,
@@ -776,25 +740,25 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       ),
       trailing: const Icon(Icons.edit_calendar),
       onTap: () async {
-        final time = await showTimePicker(
+        final t = await showTimePicker(
           context: context,
           initialTime: TimeOfDay.fromDateTime(goalTime),
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-            child: child!,
+          builder: (c, ch) => MediaQuery(
+            data: MediaQuery.of(c).copyWith(alwaysUse24HourFormat: true),
+            child: ch!,
           ),
         );
-        if (time != null) {
+        if (t != null) {
           setState(() {
             goalTime = DateTime(
               goalTime.year,
               goalTime.month,
               goalTime.day,
-              time.hour,
-              time.minute,
+              t.hour,
+              t.minute,
             );
-            _saveData();
           });
+          _saveData();
         }
       },
     );
@@ -829,12 +793,12 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                           style: const TextStyle(fontSize: 10),
                         ),
                         selected: bufferMinutes == m,
-                        onSelected: (selected) {
-                          if (selected) {
+                        onSelected: (s) {
+                          if (s) {
                             setState(() {
                               bufferMinutes = m;
-                              _saveData();
                             });
+                            _saveData();
                           }
                         },
                       ),
@@ -849,37 +813,37 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
             max: 15,
             divisions: 15,
             activeColor: Colors.orange,
-            onChanged: (value) => setState(() {
-              bufferMinutes = value.toInt();
+            onChanged: (v) {
+              setState(() {
+                bufferMinutes = v.toInt();
+              });
               _saveData();
-            }),
+            },
           ),
         ],
       ),
     );
   }
 
-  IconData _getTaskIcon(String name) {
-    String n = name.toLowerCase();
-    if (n.contains('風呂') || n.contains('洗い')) return Icons.bathtub_outlined;
-    if (n.contains('walk') || n.contains('歩')) return Icons.directions_walk;
-    if (n.contains('バス') || n.contains('電車')) return Icons.directions_bus;
-    if (n.contains('スッキリ')) return Icons.face_retouching_natural;
-    if (n.contains('spare') || n.contains('余裕')) return Icons.weekend_outlined;
-    if (n.contains('飯') || n.contains('食')) return Icons.restaurant;
-    if (n.contains('服') || n.contains('着')) return Icons.checkroom;
+  IconData _getTaskIcon(String n) {
+    String s = n.toLowerCase();
+    if (s.contains('風呂') || s.contains('洗い')) return Icons.bathtub_outlined;
+    if (s.contains('walk') || s.contains('歩')) return Icons.directions_walk;
+    if (s.contains('バス') || s.contains('電車')) return Icons.directions_bus;
+    if (s.contains('スッキリ')) return Icons.face_retouching_natural;
+    if (s.contains('spare') || s.contains('余裕')) return Icons.weekend_outlined;
+    if (s.contains('飯') || s.contains('食')) return Icons.restaurant;
+    if (s.contains('服') || s.contains('着')) return Icons.checkroom;
     return Icons.task_alt;
   }
 
-  Widget _buildTaskTile(Task task, DateTime startTime, int index) {
+  Widget _buildTaskTile(Task t, DateTime s, int i) {
     final now = DateTime.now();
-    final endTime = startTime.add(Duration(minutes: task.duration));
-    bool isCurrent = now.isAfter(startTime) && now.isBefore(endTime);
-    bool isPast = now.isAfter(endTime);
-    bool isLate = isPast && !task.isDone;
-
+    final end = s.add(Duration(minutes: t.duration));
+    bool isCur = now.isAfter(s) && now.isBefore(end);
+    bool isLate = now.isAfter(end) && !t.isDone;
     return Dismissible(
-      key: ValueKey(task.hashCode + index),
+      key: ValueKey(t.hashCode + i),
       direction: DismissDirection.endToStart,
       background: Container(
         color: Colors.red,
@@ -893,22 +857,22 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           ],
         ),
       ),
-      onDismissed: (_) {
-        final deletedTask = task;
+      onDismissed: (d) {
+        final old = t;
         setState(() {
-          tasks.removeAt(index);
-          _saveData();
+          tasks.removeAt(i);
         });
+        _saveData();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${deletedTask.name} を削除しました'),
+            content: Text('${old.name} 削除'),
             action: SnackBarAction(
-              label: '元に戻す',
+              label: '戻す',
               onPressed: () {
                 setState(() {
-                  tasks.insert(index, deletedTask);
-                  _saveData();
+                  tasks.insert(i, old);
                 });
+                _saveData();
               },
             ),
           ),
@@ -917,80 +881,89 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: ListTile(
-          onTap: () => _showTaskDialog(task: task, index: index),
-          tileColor: isCurrent && !task.isSkipped
+          onTap: () => _showTaskDialog(task: t, index: i),
+          tileColor: isCur && !t.isSkipped
               ? Colors.blue.withValues(alpha: 0.1)
               : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
-            side: isCurrent && !task.isSkipped
+            side: isCur && !t.isSkipped
                 ? const BorderSide(color: Colors.blue, width: 2)
                 : BorderSide.none,
           ),
-          leading: task.isSkipped
+          leading: t.isSkipped
               ? const Icon(Icons.block, color: Colors.grey)
               : Checkbox(
-                  value: task.isDone,
-                  onChanged: (bool? value) {
+                  value: t.isDone,
+                  onChanged: (v) {
                     setState(() {
-                      task.isDone = value ?? false;
-                      _saveData();
+                      t.isDone = v ?? false;
+                      // 💡 完了後にチェックを外したら、未完了状態に戻す
+                      if (!t.isDone) {
+                        isCompleted = false;
+                      }
                     });
+                    _saveData();
                   },
                 ),
           title: Row(
             children: [
               Icon(
-                task.isSkipped ? Icons.redo : _getTaskIcon(task.name),
+                t.isSkipped ? Icons.redo : _getTaskIcon(t.name),
                 size: 18,
-                color: (task.isDone || task.isSkipped)
+                color: (t.isDone || t.isSkipped)
                     ? Colors.grey
                     : (isLate ? Colors.red : Colors.indigo),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  task.name + (task.isSkipped ? ' (スキップ中)' : ''),
+                  t.name + (t.isSkipped ? ' (スキップ)' : ''),
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    decoration: (task.isDone || task.isSkipped)
+                    decoration: (t.isDone || t.isSkipped)
                         ? TextDecoration.lineThrough
                         : null,
-                    color: (task.isDone || task.isSkipped)
+                    color: (t.isDone || t.isSkipped)
                         ? Colors.grey
                         : (isLate ? Colors.red : Colors.black),
-                    fontStyle: task.isSkipped
+                    fontStyle: t.isSkipped
                         ? FontStyle.italic
                         : FontStyle.normal,
                   ),
                 ),
               ),
-              if (isActive && !task.isDone)
+              if (isActive && !t.isDone)
                 IconButton(
                   icon: Icon(
-                    task.isSkipped ? Icons.replay : Icons.fast_forward,
+                    t.isSkipped ? Icons.replay : Icons.fast_forward,
                     size: 20,
-                    color: task.isSkipped ? Colors.blue : Colors.orange,
+                    color: t.isSkipped ? Colors.blue : Colors.orange,
                   ),
-                  tooltip: task.isSkipped ? '予定を復活させる' : 'この予定をスキップ',
-                  onPressed: () => setState(() {
-                    task.isSkipped = !task.isSkipped;
+                  onPressed: () {
+                    setState(() {
+                      t.isSkipped = !t.isSkipped;
+                      // 💡 スキップを解除した時も未完了状態に戻す
+                      if (!t.isSkipped && !t.isDone) {
+                        isCompleted = false;
+                      }
+                    });
                     _saveData();
-                  }),
+                  },
                 ),
-              if (isCurrent && !task.isSkipped)
+              if (isCur && !t.isSkipped)
                 const Badge(label: Text('NOW'), backgroundColor: Colors.blue),
             ],
           ),
-          subtitle: isCurrent
+          subtitle: isCur && !t.isSkipped
               ? Text(
-                  'あと ${endTime.difference(now).inMinutes + 1} 分で終了予定',
+                  'あと ${end.difference(now).inMinutes + 1} 分',
                   style: const TextStyle(
                     color: Colors.blue,
                     fontWeight: FontWeight.bold,
                   ),
                 )
-              : Text('所要時間: ${task.duration}分'),
+              : Text('${t.duration}分'),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -999,11 +972,11 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    DateFormat('HH:mm').format(startTime),
+                    DateFormat('HH:mm').format(s),
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
-                      color: task.isDone
+                      color: t.isDone
                           ? Colors.grey
                           : (isLate ? Colors.red : Colors.blue),
                     ),
@@ -1019,7 +992,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
               ),
               const SizedBox(width: 8),
               ReorderableDragStartListener(
-                index: index,
+                index: i,
                 child: const Icon(Icons.drag_handle, color: Colors.grey),
               ),
             ],
@@ -1030,15 +1003,14 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   }
 
   void _showGoalLabelEditDialog() {
-    String newLabel = goalLabel;
+    String n = goalLabel;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('目標の名称を変更'),
+        title: const Text('目標名変更'),
         content: TextField(
           controller: TextEditingController(text: goalLabel),
-          onChanged: (value) => newLabel = value,
-          decoration: const InputDecoration(hintText: '例：バス出発、家を出る'),
+          onChanged: (v) => n = v,
         ),
         actions: [
           TextButton(
@@ -1048,9 +1020,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           ElevatedButton(
             onPressed: () {
               setState(() {
-                goalLabel = newLabel;
-                _saveData();
+                goalLabel = n;
               });
+              _saveData();
               Navigator.pop(context);
             },
             child: const Text('更新'),
