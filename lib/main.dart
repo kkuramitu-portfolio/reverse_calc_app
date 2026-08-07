@@ -75,6 +75,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   DateTime goalTime = DateTime.now();
   List<Task> tasks = [];
   String goalLabel = '目標時刻';
+  String? currentTemplateName;
   Map<String, Map<String, dynamic>> templates = {};
   Map<String, int> quickMaster = {'Walking': 20, '風呂': 30, 'スッキリ': 10};
   int bufferMinutes = 0;
@@ -188,6 +189,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
         'isActive': isActive,
         'isCompleted': isCompleted,
         'last_read_announcement_id': _lastReadAnnouncementId,
+        'currentTemplateName': currentTemplateName,
       }),
     );
   }
@@ -200,6 +202,7 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
       setState(() {
         goalTime = DateTime.parse(decodedData['goalTime']);
         goalLabel = decodedData['goalLabel'] ?? '目標時刻';
+        currentTemplateName = decodedData['currentTemplateName'];
         tasks = (decodedData['tasks'] as List)
             .map((item) => Task.fromJson(item))
             .toList();
@@ -221,14 +224,21 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   }
 
   void _saveCurrentAsTemplate() {
-    String name = '';
+    // 💡 ダイアログを開く直前に、現在の名前をコントローラーにセットする
+    final TextEditingController nameController = TextEditingController(
+      text: currentTemplateName ?? "",
+    );
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('テンプレート保存'),
         content: TextField(
-          onChanged: (v) => name = v,
-          decoration: const InputDecoration(labelText: '名前'),
+          controller: nameController, // 💡 これで名前が自動で入る
+          decoration: const InputDecoration(
+            labelText: 'テンプレート名',
+            hintText: '例：平日の朝',
+          ),
         ),
         actions: [
           TextButton(
@@ -237,14 +247,18 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
           ),
           ElevatedButton(
             onPressed: () {
-              if (name.isEmpty) return;
+              final String newName = nameController.text;
+              if (newName.isEmpty) return;
+
               setState(() {
-                goalLabel = name;
-                templates[name] = {
-                  'goalLabel': goalLabel,
+                goalLabel = newName;
+                templates[newName] = {
+                  'goalLabel': newName,
                   'tasks': tasks.map((t) => t.toJson()).toList(),
                   'bufferMinutes': bufferMinutes,
                 };
+                // 💡 保存した名前を「今の名前」として記憶する
+                currentTemplateName = newName;
                 _saveData();
               });
               Navigator.pop(context);
@@ -259,6 +273,9 @@ class _ReverseCalcContentState extends State<ReverseCalcContent> {
   void _loadTemplate(String name) {
     if (!templates.containsKey(name)) return;
     setState(() {
+      // 💡 ここで「今の名前」を更新する
+      currentTemplateName = name;
+
       final data = templates[name]!;
       goalLabel = data['goalLabel'] ?? name;
       tasks = (data['tasks'] as List)
